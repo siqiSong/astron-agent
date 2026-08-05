@@ -4569,6 +4569,9 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
     }
 
     public McpServerToolDetailVO getServerToolDetailLocally(String serverId) {
+        // The detail route can be opened directly (for example from a bookmarked
+        // plugin-square card), before the list route has initialized the cache.
+        checkAndRefreshCache();
         // Get directly from cache
         JSONObject jsonObject = MCP_SERVER_CACHE.get(serverId);
         if (jsonObject != null) {

@@ -17,6 +17,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.HashMap;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -111,5 +112,18 @@ class WorkflowServiceMcpRuntimeConfigTest {
                 .containsExactly("database-server-id");
         assertThat(plugin.getJSONArray("mcpServerUrls"))
                 .containsExactly("https://mcp.example.com/sse", "http://core-aitools:18669/mcp/sse");
+    }
+
+    @Test
+    void getServerToolDetailLocallyInitializesCacheForDirectDetailNavigation() {
+        ReflectionTestUtils.setField(WorkflowService.class, "MCP_SERVER_CACHE", new HashMap<>());
+        ReflectionTestUtils.setField(WorkflowService.class, "lastCacheLoadTime", 0L);
+        ReflectionTestUtils.setField(workflowService, "mcpServerFilePath", "classpath:mcp-server");
+
+        var detail = workflowService.getServerToolDetailLocally("tabletools-local-v1");
+
+        assertThat(detail).isNotNull();
+        assertThat(detail.getName()).isEqualTo("表格处理工具箱");
+        assertThat(detail.getTools()).hasSize(4);
     }
 }
