@@ -46,4 +46,13 @@ describe("ConsecutiveToolCallGuard", () => {
       guard.beforeToolCall(call("query_status", { job_id: "7" })),
     ).resolves.toBeUndefined();
   });
+
+  it("does not exempt a remote plugin allocated from the wait name", async () => {
+    const guard = new ConsecutiveToolCallGuard(1);
+    await guard.beforeToolCall(call("wait__2", { seconds: 30 }));
+
+    await expect(
+      guard.beforeToolCall(call("wait__2", { seconds: 30 })),
+    ).resolves.toMatchObject({ block: true });
+  });
 });

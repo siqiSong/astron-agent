@@ -80,6 +80,32 @@ describe("normalizeToolDescriptors", () => {
       ]).map((tool) => tool.runtimeName),
     ).toEqual(["query_status", "query_status__2", "query_status__3"]);
   });
+
+  it("reserves wait across punctuation, case variants and duplicate names", () => {
+    expect(
+      normalizeToolDescriptors([
+        { ...validStart.tools[0], name: "wait" },
+        { ...validStart.tools[0], name: "--wait--" },
+        { ...validStart.tools[0], name: "WAIT" },
+      ]).map((tool) => ({
+        label: tool.name,
+        runtimeName: tool.runtimeName,
+      })),
+    ).toEqual([
+      { label: "wait", runtimeName: "wait__2" },
+      { label: "--wait--", runtimeName: "wait__3" },
+      { label: "WAIT", runtimeName: "wait__4" },
+    ]);
+  });
+
+  it("does not reuse an explicitly suffixed runtime name", () => {
+    expect(
+      normalizeToolDescriptors([
+        { ...validStart.tools[0], name: "wait__2" },
+        { ...validStart.tools[0], name: "wait" },
+      ]).map((tool) => tool.runtimeName),
+    ).toEqual(["wait__2", "wait__3"]);
+  });
 });
 
 describe("loadRuntimeConfig", () => {

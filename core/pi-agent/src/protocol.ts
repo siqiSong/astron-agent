@@ -283,17 +283,34 @@ function normalizeToolName(name: string): string {
   return /^[A-Za-z_]/u.test(normalized) ? normalized : `tool_${normalized}`;
 }
 
+const RESERVED_RUNTIME_NAMES = new Map([["wait", "wait"]]);
+
+function allocationBase(name: string): string {
+  const normalized = normalizeToolName(name);
+  return RESERVED_RUNTIME_NAMES.get(normalized.toLowerCase()) ?? normalized;
+}
+
+function allocateRuntimeName(baseName: string, usedNames: Set<string>): string {
+  if (!usedNames.has(baseName)) {
+    usedNames.add(baseName);
+    return baseName;
+  }
+
+  let suffix = 2;
+  while (usedNames.has(`${baseName}__${suffix}`)) suffix += 1;
+  const runtimeName = `${baseName}__${suffix}`;
+  usedNames.add(runtimeName);
+  return runtimeName;
+}
+
 export function normalizeToolDescriptors(
   tools: readonly ToolDescriptor[],
 ): NormalizedToolDescriptor[] {
-  const counts = new Map<string, number>();
+  const usedNames = new Set(RESERVED_RUNTIME_NAMES.values());
   return tools.map((tool) => {
-    const baseName = normalizeToolName(tool.name);
-    const count = (counts.get(baseName) ?? 0) + 1;
-    counts.set(baseName, count);
     return {
       ...tool,
-      runtimeName: count === 1 ? baseName : `${baseName}__${count}`,
+      runtimeName: allocateRuntimeName(allocationBase(tool.name), usedNames),
     };
   });
 }

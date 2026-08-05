@@ -5,6 +5,8 @@ from typing import Any
 from agent.api.schemas.llm_message import LLMMessage
 from agent.service.plugin.base import BasePlugin
 
+_RESERVED_RUNTIME_NAMES = {"wait": "wait"}
+
 
 def normalize_tool_name(name: str) -> str:
     normalized = re.sub(r"[^A-Za-z0-9_]+", "_", name.strip()).strip("_") or "tool"
@@ -13,17 +15,32 @@ def normalize_tool_name(name: str) -> str:
     return normalized
 
 
+def _allocation_base(name: str) -> str:
+    normalized = normalize_tool_name(name)
+    return _RESERVED_RUNTIME_NAMES.get(normalized.casefold(), normalized)
+
+
+def _allocate_runtime_name(base_name: str, used_names: set[str]) -> str:
+    if base_name not in used_names:
+        used_names.add(base_name)
+        return base_name
+
+    suffix = 2
+    while f"{base_name}__{suffix}" in used_names:
+        suffix += 1
+    runtime_name = f"{base_name}__{suffix}"
+    used_names.add(runtime_name)
+    return runtime_name
+
+
 def build_tool_contracts(
     plugins: Sequence[BasePlugin],
 ) -> tuple[list[dict[str, Any]], dict[str, BasePlugin]]:
-    counts: dict[str, int] = {}
+    used_names = set(_RESERVED_RUNTIME_NAMES.values())
     contracts: list[dict[str, Any]] = []
     plugin_by_runtime_name: dict[str, BasePlugin] = {}
     for plugin in plugins:
-        base_name = normalize_tool_name(plugin.name)
-        count = counts.get(base_name, 0) + 1
-        counts[base_name] = count
-        runtime_name = base_name if count == 1 else f"{base_name}__{count}"
+        runtime_name = _allocate_runtime_name(_allocation_base(plugin.name), used_names)
         contracts.append(
             {
                 "name": plugin.name,

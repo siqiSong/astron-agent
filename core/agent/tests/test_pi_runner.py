@@ -14,6 +14,7 @@ from agent.api.schemas.agent_event import AgentEventBase
 from agent.api.schemas.agent_response import AgentResponse
 from agent.api.schemas.llm_message import LLMMessage
 from agent.engine.nodes.pi.pi_runner import PiModelConfig, PiRunner
+from agent.engine.nodes.pi.protocol import build_tool_contracts
 from agent.exceptions.agent_exc import AgentExc
 from agent.service.plugin.base import BasePlugin, PluginResponse
 from agent.service.plugin.mcp import McpPlugin
@@ -727,6 +728,128 @@ async def test_duplicate_normalized_names_invoke_the_correct_plugin(
         ]
 
     assert calls == ["second"]
+
+
+def test_wait_runtime_name_is_reserved_across_case_punctuation_and_duplicates() -> None:
+    async def tool_run(action_input: dict[str, Any], span: Span) -> PluginResponse:
+        return PluginResponse(result=action_input)
+
+    tools = [
+        plugin("wait", tool_run),
+        plugin("--wait--", tool_run),
+        plugin("WAIT", tool_run),
+    ]
+
+    contracts, plugin_by_runtime_name = build_tool_contracts(tools)
+
+    assert [contract["name"] for contract in contracts] == [
+        "wait",
+        "--wait--",
+        "WAIT",
+    ]
+    assert list(plugin_by_runtime_name) == ["wait__2", "wait__3", "wait__4"]
+    assert list(plugin_by_runtime_name.values()) == tools
+
+
+@pytest.mark.asyncio
+async def test_remote_wait_plugin_dispatches_and_completes_under_reserved_name(
+    unused_tcp_port: int,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    received_result: dict[str, Any] = {}
+
+    async def tool_run(action_input: dict[str, Any], span: Span) -> PluginResponse:
+        calls.append(action_input)
+        return PluginResponse(result={"source": "remote-wait"})
+
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        start = await ws.receive_json()
+        assert start["tools"][0]["name"] == "wait"
+        await ws.send_json(
+            {
+                "type": "tool_call",
+                "callId": "remote-wait-call",
+                "turnId": "turn-1",
+                "name": "wait__2",
+                "arguments": {"value": "remote"},
+            }
+        )
+        received_result.update(await ws.receive_json())
+        await ws.send_json({"type": "done"})
+        return ws
+
+    async with serve_pi(unused_tcp_port, handler) as url:
+        responses = [
+            response
+            async for response in pi_runner(url, [plugin("wait", tool_run)]).run(
+                Span(app_id="app", uid="uid"), node_trace()
+            )
+        ]
+
+    assert calls == [{"value": "remote"}]
+    assert received_result == {
+        "type": "tool_result",
+        "callId": "remote-wait-call",
+        "result": {"source": "remote-wait"},
+        "isError": False,
+    }
+    tool_events = [
+        event
+        for event in public_events(responses)
+        if event.type in {"tool_start", "tool_finish"}
+    ]
+    assert [event.type for event in tool_events] == ["tool_start", "tool_finish"]
+    assert [event.name for event in tool_events] == ["wait", "wait"]
+
+
+@pytest.mark.asyncio
+async def test_remote_wait_plugin_cancellation_finishes_reserved_tool() -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def tool_run(action_input: dict[str, Any], span: Span) -> PluginResponse:
+        entered.set()
+        await release.wait()
+        return PluginResponse(result={"ready": True})
+
+    class _WebSocket:
+        async def send_json(self, payload: dict[str, Any]) -> None:
+            raise AssertionError(f"cancelled tool must not return a result: {payload}")
+
+    runner = pi_runner(
+        "ws://runtime.invalid/internal/v1/runs",
+        [plugin("wait", tool_run)],
+    )
+    _, plugin_by_runtime_name = build_tool_contracts(runner.plugins)
+    responses = runner._handle_tool_call(
+        {
+            "type": "tool_call",
+            "callId": "cancelled-remote-wait",
+            "turnId": "turn-1",
+            "name": "wait__2",
+            "arguments": {"value": "remote"},
+        },
+        plugin_by_runtime_name,
+        _WebSocket(),  # type: ignore[arg-type]
+        Span(app_id="app", uid="uid"),
+    )
+
+    started = await anext(responses)
+    assert started.content.type == "tool_start"
+    assert started.content.name == "wait"
+
+    pending = asyncio.create_task(anext(responses))
+    await entered.wait()
+    pending.cancel()
+    finished = await pending
+    assert finished.content.type == "tool_finish"
+    assert finished.content.name == "wait"
+    assert finished.content.status == "cancelled"
+
+    with pytest.raises(asyncio.CancelledError):
+        await anext(responses)
 
 
 @pytest.mark.asyncio
