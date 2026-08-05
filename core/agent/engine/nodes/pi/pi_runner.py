@@ -152,6 +152,37 @@ class PiRunner:
         if not hasattr(invocation, "__aiter__"):
             raise TypeError(f"Plugin {plugin.name} is not async")
 
+        async for event in self._stream_plugin_invocation(plugin, invocation):
+            yield event
+
+    def _final_plugin_response(
+        self,
+        plugin: BasePlugin,
+        last_response: PluginResponse | None,
+        reasoning_parts: list[str],
+        content_parts: list[str],
+    ) -> PluginResponse:
+        if last_response is None:
+            return PluginResponse(
+                code=500,
+                result={"message": f"Plugin {plugin.name} returned no result"},
+            )
+        if content_parts or reasoning_parts:
+            return last_response.model_copy(
+                update={
+                    "result": {
+                        "reasoning_content": "".join(reasoning_parts),
+                        "content": "".join(content_parts),
+                    }
+                }
+            )
+        return last_response
+
+    async def _stream_plugin_invocation(
+        self,
+        plugin: BasePlugin,
+        invocation: Any,
+    ) -> AsyncIterator[_ExecutionEvent]:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         last_response: PluginResponse | None = None
@@ -170,22 +201,14 @@ class PiRunner:
             if response.code != 0:
                 break
 
-        if last_response is None:
-            last_response = PluginResponse(
-                code=500,
-                result={"message": f"Plugin {plugin.name} returned no result"},
-            )
-        elif content_parts or reasoning_parts:
-            last_response = last_response.model_copy(
-                update={
-                    "result": {
-                        "reasoning_content": "".join(reasoning_parts),
-                        "content": "".join(content_parts),
-                    }
-                }
-            )
-        plugin.run_result = last_response
-        yield _ExecutionEvent(result=last_response)
+        final_response = self._final_plugin_response(
+            plugin,
+            last_response,
+            reasoning_parts,
+            content_parts,
+        )
+        plugin.run_result = final_response
+        yield _ExecutionEvent(result=final_response)
 
     async def _handle_tool_call(
         self,
