@@ -4,9 +4,12 @@ import base64
 import hashlib
 import hmac
 import json
+import math
+import os
 import time
 from contextlib import ExitStack
-from typing import Any, Callable, cast
+from dataclasses import dataclass
+from typing import Any, Callable, ClassVar, Mapping, cast
 
 import requests
 from requests_toolbelt.multipart.encoder import MultipartEncoder  # type: ignore[import-untyped]
@@ -16,6 +19,54 @@ from .credentials import Credentials
 
 class ZhiwenApiError(RuntimeError):
     """Raised when Zhiwen returns an invalid or unsuccessful API response."""
+
+
+@dataclass(frozen=True)
+class ZhiwenTimeouts:
+    """Bounded connect/read timeouts for every upstream Zhiwen request."""
+
+    connect_seconds: float = 5.0
+    read_seconds: float = 120.0
+
+    _MAX_CONNECT_SECONDS: ClassVar[float] = 60.0
+    _MAX_READ_SECONDS: ClassVar[float] = 300.0
+
+    def __post_init__(self) -> None:
+        self._validate("connect", self.connect_seconds, self._MAX_CONNECT_SECONDS)
+        self._validate("read", self.read_seconds, self._MAX_READ_SECONDS)
+
+    @staticmethod
+    def _validate(name: str, value: float, maximum: float) -> None:
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value <= 0
+            or value > maximum
+        ):
+            raise ValueError(
+                f"PPT {name} timeout must be greater than 0 and at most {maximum:g} seconds"
+            )
+
+    @classmethod
+    def from_environ(
+        cls, environ: Mapping[str, str] | None = None
+    ) -> "ZhiwenTimeouts":
+        values = os.environ if environ is None else environ
+        try:
+            connect_seconds = float(
+                values.get("PPT_CONNECT_TIMEOUT_SECONDS", "5")
+            )
+            read_seconds = float(values.get("PPT_READ_TIMEOUT_SECONDS", "120"))
+        except ValueError as error:
+            raise ValueError("PPT timeout settings must be numeric seconds") from error
+        return cls(
+            connect_seconds=connect_seconds,
+            read_seconds=read_seconds,
+        )
+
+    def as_requests_timeout(self) -> tuple[float, float]:
+        return self.connect_seconds, self.read_seconds
 
 
 class ZhiwenClient:
@@ -28,10 +79,12 @@ class ZhiwenClient:
         credentials: Credentials,
         session: requests.Session | None = None,
         clock: Callable[[], float] = time.time,
+        timeouts: ZhiwenTimeouts | None = None,
     ) -> None:
         self._credentials = credentials
         self._session = session or requests.Session()
         self._clock = clock
+        self._timeouts = timeouts or ZhiwenTimeouts()
 
     def headers(self, content_type: str = "application/json; charset=utf-8") -> dict[str, str]:
         timestamp = str(int(self._clock()))
@@ -181,7 +234,12 @@ class ZhiwenClient:
         content_type: str | None = None,
         json_body: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        kwargs: dict[str, Any] = {"headers": self.headers(content_type or "application/json; charset=utf-8")}
+        kwargs: dict[str, Any] = {
+            "headers": self.headers(
+                content_type or "application/json; charset=utf-8"
+            ),
+            "timeout": self._timeouts.as_requests_timeout(),
+        }
         if params is not None:
             kwargs["params"] = params
         if data is not None:
@@ -190,6 +248,8 @@ class ZhiwenClient:
             kwargs["json"] = json_body
         try:
             response = self._session.request(method, f"{self._base_url}{endpoint}", **kwargs)
+        except requests.Timeout as error:
+            raise self._api_error(f"request timed out: {error}") from None
         except requests.RequestException as error:
             raise self._api_error(str(error)) from None
         if response.status_code != 200:

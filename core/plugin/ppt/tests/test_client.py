@@ -6,8 +6,9 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+import requests
 
-from zwppt_mcp.client import ZhiwenApiError, ZhiwenClient
+from zwppt_mcp.client import ZhiwenApiError, ZhiwenClient, ZhiwenTimeouts
 from zwppt_mcp.credentials import Credentials
 
 
@@ -34,7 +35,11 @@ class RecordingResponse:
 
 
 class RecordingSession:
-    def __init__(self, responses: Iterator[RecordingResponse] | None = None) -> None:
+    def __init__(
+        self,
+        responses: Iterator[RecordingResponse | requests.RequestException]
+        | None = None,
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.responses = responses or iter(())
 
@@ -43,7 +48,10 @@ class RecordingSession:
         if "data" in kwargs:
             call["body"] = kwargs["data"].to_string()
         self.calls.append(call)
-        return next(self.responses, RecordingResponse())
+        response = next(self.responses, RecordingResponse())
+        if isinstance(response, requests.RequestException):
+            raise response
+        return response
 
 
 def test_signature_and_headers_are_deterministic() -> None:
@@ -94,6 +102,7 @@ def test_methods_send_documented_requests_and_return_documented_results(
     assert client.create_ppt_by_outline("topic", {"title": "outline"}, "template-1") == {"sid": "task-1"}
 
     assert [(call["method"], call["url"].removeprefix("https://zwapi.xfyun.cn")) for call in session.calls] == list(EXPECTED_ENDPOINTS.values())
+    assert [call["timeout"] for call in session.calls] == [(5.0, 120.0)] * 6
     assert session.calls[0]["params"] == {"payType": "not_free", "pageNum": 2, "pageSize": 10, "style": "business", "color": "blue", "industry": "finance"}
     assert session.calls[2]["params"] == {"sid": "task-1"}
     assert session.calls[1]["headers"]["Content-Type"].startswith("multipart/form-data; boundary=")
@@ -204,3 +213,81 @@ def test_error_redaction_does_not_leak_an_overlapping_secret() -> None:
 
     assert "app" not in str(error.value)
     assert "secret" not in str(error.value)
+
+
+def test_custom_connect_and_read_timeouts_are_forwarded() -> None:
+    session = RecordingSession()
+    client = ZhiwenClient(
+        Credentials("app-1", "secret-1"),
+        session=session,
+        timeouts=ZhiwenTimeouts(connect_seconds=1.5, read_seconds=9.0),
+    )
+
+    client.get_task_progress("task-1")
+
+    assert session.calls[0]["timeout"] == (1.5, 9.0)
+
+
+def test_timeout_settings_are_loaded_from_bounded_environment_values() -> None:
+    assert ZhiwenTimeouts.from_environ(
+        {
+            "PPT_CONNECT_TIMEOUT_SECONDS": "2.5",
+            "PPT_READ_TIMEOUT_SECONDS": "45",
+        }
+    ) == ZhiwenTimeouts(connect_seconds=2.5, read_seconds=45.0)
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [
+        {"PPT_CONNECT_TIMEOUT_SECONDS": "0"},
+        {"PPT_CONNECT_TIMEOUT_SECONDS": "61"},
+        {"PPT_READ_TIMEOUT_SECONDS": "nan"},
+        {"PPT_READ_TIMEOUT_SECONDS": "301"},
+    ],
+)
+def test_timeout_settings_reject_unbounded_values(environ: dict[str, str]) -> None:
+    with pytest.raises(ValueError, match="timeout"):
+        ZhiwenTimeouts.from_environ(environ)
+
+
+def test_timeout_error_is_redacted_and_next_request_recovers() -> None:
+    complete = {"code": 0, "data": {"pptStatus": "done"}}
+    session = RecordingSession(
+        iter(
+            [
+                requests.ConnectTimeout("connect app-1 secret-1 stalled"),
+                RecordingResponse(payload=complete),
+            ]
+        )
+    )
+    client = ZhiwenClient(Credentials("app-1", "secret-1"), session=session)
+
+    with pytest.raises(ZhiwenApiError, match="timed out") as error:
+        client.get_task_progress("task-1")
+
+    assert "app-1" not in str(error.value)
+    assert "secret-1" not in str(error.value)
+    assert client.get_task_progress("task-1") == complete
+
+
+def test_multipart_upload_uses_timeout_and_closes_after_read_timeout(
+    tmp_path: Any,
+) -> None:
+    session = RecordingSession(iter([requests.ReadTimeout("upload timed out")]))
+    client = ZhiwenClient(
+        Credentials("app-1", "secret-1"),
+        session=session,
+        timeouts=ZhiwenTimeouts(connect_seconds=3.0, read_seconds=30.0),
+    )
+    document = tmp_path / "source.docx"
+    document.write_bytes(b"document")
+
+    with pytest.raises(ZhiwenApiError, match="timed out"):
+        client.create_outline_by_doc(
+            "source.docx", "topic", file_path=str(document)
+        )
+
+    assert session.calls[0]["timeout"] == (3.0, 30.0)
+    assert b'name="file"; filename="source.docx"' in session.calls[0]["body"]
+    assert session.calls[0]["data"].fields["file"][1].closed is True

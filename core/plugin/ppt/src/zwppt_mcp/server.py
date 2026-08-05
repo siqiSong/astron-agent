@@ -6,7 +6,7 @@ from typing import Any, Mapping, Protocol
 
 from mcp.server.fastmcp import FastMCP
 
-from .client import ZhiwenClient
+from .client import ZhiwenClient, ZhiwenTimeouts
 from .credentials import load_credentials
 
 
@@ -274,5 +274,8 @@ def create_mcp(client: ZhiwenTools, settings: ServerSettings | None = None) -> F
 
 
 def main() -> None:
-    client = ZhiwenClient(load_credentials())
+    client = ZhiwenClient(
+        load_credentials(),
+        timeouts=ZhiwenTimeouts.from_environ(),
+    )
     create_mcp(client).run(transport="sse")
