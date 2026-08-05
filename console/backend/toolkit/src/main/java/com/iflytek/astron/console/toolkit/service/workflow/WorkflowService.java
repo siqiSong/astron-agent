@@ -148,6 +148,7 @@ import java.time.ZoneOffset;
 import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -1773,6 +1774,7 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
         }
         // 4) Validate & write protocol data (nodes/edges & length limit & merge write)
         BizWorkflowData bizWorkflowData = saveReq.getData();
+        validateAndRepairReferences(bizWorkflowData);
         writeProtocolDataIfPresent(workflow, bizWorkflowData);
 
         // 5) SSRF/URL whitelist/blacklist validation (only when data exists)
@@ -1845,6 +1847,79 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
     }
 
     // ========== 4. Write protocol data (including validation and length limits) ==========
+    private void validateAndRepairReferences(BizWorkflowData workflowData) {
+        if (workflowData == null || CollectionUtils.isEmpty(workflowData.getNodes())) {
+            return;
+        }
+
+        Map<String, BizWorkflowNode> nodesById = workflowData.getNodes().stream()
+                .filter(Objects::nonNull)
+                .filter(node -> StringUtils.isNotBlank(node.getId()))
+                .collect(Collectors.toMap(BizWorkflowNode::getId, node -> node, (first, ignored) -> first));
+        List<BizWorkflowEdge> edges = Optional.ofNullable(workflowData.getEdges()).orElseGet(Collections::emptyList);
+
+        for (BizWorkflowNode targetNode : workflowData.getNodes()) {
+            if (targetNode == null || targetNode.getData() == null
+                    || CollectionUtils.isEmpty(targetNode.getData().getInputs())) {
+                continue;
+            }
+            for (BizInputOutput input : targetNode.getData().getInputs()) {
+                BizValue value = Optional.ofNullable(input)
+                        .map(BizInputOutput::getSchema)
+                        .map(BizSchema::getValue)
+                        .orElse(null);
+                if (value == null || !"ref".equals(value.getType()) || !(value.getContent() instanceof Map<?, ?> content)) {
+                    continue;
+                }
+                String referencedNodeId = Objects.toString(content.get("nodeId"), "");
+                if (StringUtils.isBlank(referencedNodeId) || nodesById.containsKey(referencedNodeId)) {
+                    continue;
+                }
+
+                String outputName = Objects.toString(content.get("name"), input.getName());
+                List<OutputReferenceCandidate> candidates = edges.stream()
+                        .filter(Objects::nonNull)
+                        .filter(edge -> Objects.equals(targetNode.getId(), edge.getTarget()))
+                        .map(BizWorkflowEdge::getSource)
+                        .distinct()
+                        .map(nodesById::get)
+                        .filter(Objects::nonNull)
+                        .flatMap(source -> matchingOutputs(source, outputName).stream()
+                                .map(output -> new OutputReferenceCandidate(source, output)))
+                        .toList();
+
+                if (candidates.size() != 1) {
+                    throw new BusinessException(ResponseEnum.RESPONSE_FAILED,
+                            "Workflow node " + targetNode.getId()
+                                    + " contains a stale reference to " + referencedNodeId
+                                    + "; please reconnect the input before running the workflow");
+                }
+
+                OutputReferenceCandidate candidate = candidates.get(0);
+                @SuppressWarnings("unchecked")
+                Map<Object, Object> mutableContent = (Map<Object, Object>) content;
+                mutableContent.put("nodeId", candidate.node().getId());
+                mutableContent.put("id", candidate.output().getId());
+                mutableContent.put("name", candidate.output().getName());
+                log.warn("Repaired stale workflow reference: target={}, oldSource={}, newSource={}, output={}",
+                        targetNode.getId(), referencedNodeId, candidate.node().getId(), candidate.output().getName());
+            }
+        }
+    }
+
+    private List<BizInputOutput> matchingOutputs(BizWorkflowNode node, String outputName) {
+        if (node.getData() == null || CollectionUtils.isEmpty(node.getData().getOutputs())) {
+            return Collections.emptyList();
+        }
+        return node.getData().getOutputs().stream()
+                .filter(Objects::nonNull)
+                .filter(output -> Objects.equals(outputName, output.getName()))
+                .toList();
+    }
+
+    private record OutputReferenceCandidate(BizWorkflowNode node, BizInputOutput output) {
+    }
+
     private void writeProtocolDataIfPresent(Workflow workflow, BizWorkflowData bizWorkflowData) {
         if (bizWorkflowData == null) {
             return;
