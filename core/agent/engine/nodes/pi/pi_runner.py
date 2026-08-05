@@ -4,6 +4,7 @@ import json
 import os
 import time
 from collections.abc import AsyncIterator, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -756,14 +757,17 @@ class PiRunner:
         timeout = aiohttp.ClientTimeout(total=None, connect=10, sock_read=None)
         state = _PiRunState()
         try:
-            async for response in self._stream_runtime_responses(
-                start_message,
-                plugin_by_runtime_name,
-                state,
-                timeout,
-                span,
-            ):
-                yield response
+            async with aclosing(
+                self._stream_runtime_responses(
+                    start_message,
+                    plugin_by_runtime_name,
+                    state,
+                    timeout,
+                    span,
+                )
+            ) as runtime_responses:
+                async for response in runtime_responses:
+                    yield response
         except (asyncio.CancelledError, Exception) as error:
             is_cancelled = isinstance(error, asyncio.CancelledError)
             if is_cancelled:

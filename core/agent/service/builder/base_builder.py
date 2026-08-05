@@ -183,9 +183,7 @@ class BaseApiBuilder(BaseModel):
 
             return sk
 
-    async def resolve_api_key(
-        self, app_id: str, model_name: str, api_key: str
-    ) -> str:
+    async def resolve_api_key(self, app_id: str, model_name: str, api_key: str) -> str:
         """Resolve an explicit key or retrieve the MaaS key for a model."""
         if api_key:
             return api_key

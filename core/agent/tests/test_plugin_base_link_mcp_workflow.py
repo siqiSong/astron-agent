@@ -195,9 +195,7 @@ class TestLinkPluginFactoryParseSchemas:
 
         assert plugin.parameters == {
             "type": "object",
-            "properties": {
-                "city": {"description": "City name", "type": "string"}
-            },
+            "properties": {"city": {"description": "City name", "type": "string"}},
             "required": ["city"],
         }
 

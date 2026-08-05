@@ -12,10 +12,7 @@ from common.otlp.trace.span import Span
 from agent.domain.models.base import AnthropicLLMModel, BaseLLMModel, GoogleLLMModel
 from agent.engine.nodes.chat.chat_runner import ChatRunner
 from agent.infra.app_auth import MaasAuth
-from agent.service.builder.base_builder import (
-    BaseApiBuilder,
-    RunnerParams,
-)
+from agent.service.builder.base_builder import BaseApiBuilder, RunnerParams
 from agent.service.plugin.base import BasePlugin
 
 

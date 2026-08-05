@@ -103,9 +103,7 @@ class TestRunnerBase:
 
 class TestChatRunner:
     @pytest.mark.asyncio
-    async def test_chat_runner_run(
-        self, span: Span, node_trace: NodeTraceLog
-    ) -> None:
+    async def test_chat_runner_run(self, span: Span, node_trace: NodeTraceLog) -> None:
         runner = ChatRunner(
             model=DummyLLM.model_construct(name="m", llm=MagicMock()),
             chat_history=[LLMMessage(role="user", content="hi")],
@@ -122,9 +120,7 @@ class TestChatRunner:
     ) -> None:
         runner = ChatRunner(
             model=DummyLLM.model_construct(name="m", llm=MagicMock()),
-            chat_history=[
-                LLMMessage(role="user", content="keep {question} literal")
-            ],
+            chat_history=[LLMMessage(role="user", content="keep {question} literal")],
             instruct="inst",
             knowledge="kb",
             question="actual question",

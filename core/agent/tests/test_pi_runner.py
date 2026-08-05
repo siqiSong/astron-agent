@@ -202,6 +202,40 @@ async def test_start_payload_uses_native_schema_and_projects_stream_events(
 
 
 @pytest.mark.asyncio
+async def test_closing_run_closes_nested_runtime_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nested_closed = asyncio.Event()
+
+    async def nested_runtime_stream() -> AsyncIterator[AgentResponse]:
+        try:
+            yield AgentResponse(
+                typ="content",
+                content="partial",
+                model="model-1",
+            )
+        finally:
+            nested_closed.set()
+
+    runner = pi_runner("ws://runtime.invalid/internal/v1/runs", [])
+    nested_stream = nested_runtime_stream()
+    monkeypatch.setattr(
+        runner,
+        "_stream_runtime_responses",
+        lambda *args: nested_stream,
+    )
+    responses = runner.run(Span(app_id="app", uid="uid"), node_trace())
+
+    assert (await anext(responses)).typ == "agent_event"
+    assert (await anext(responses)).content == "partial"
+    try:
+        await responses.aclose()
+        assert nested_closed.is_set()
+    finally:
+        await nested_stream.aclose()
+
+
+@pytest.mark.asyncio
 async def test_usage_events_are_cumulative_while_legacy_usage_remains_per_turn(
     unused_tcp_port: int,
 ) -> None:

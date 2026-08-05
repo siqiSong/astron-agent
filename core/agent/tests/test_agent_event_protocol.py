@@ -10,7 +10,6 @@ from agent.api.schemas.agent_event import (
     validate_agent_event_v1,
 )
 
-
 CONTRACT_PATH = (
     Path(__file__).resolve().parents[3]
     / "docs/contracts/agent-event-protocol-v1.schema.json"

@@ -2,7 +2,6 @@ from typing import Annotated, Any, Literal, TypeAlias, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-
 AgentExecutionStatus: TypeAlias = Literal["success", "error", "cancelled"]
 AgentToolStatus: TypeAlias = Literal["running", "success", "error", "cancelled"]
 AgentToolTerminalStatus: TypeAlias = Literal["success", "error", "cancelled"]

@@ -9,7 +9,6 @@ from agent.api.schemas.agent_event import (
     validate_agent_event_v1,
 )
 
-
 _RUNTIME_SEGMENT_TYPES = frozenset(
     {"segment_start", "segment_delta", "segment_end", "turn_commit"}
 )
