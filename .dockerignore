@@ -1,0 +1,14 @@
+.git
+.worktrees
+**/.DS_Store
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.venv
+**/node_modules
+**/dist
+**/target
+**/coverage
+**/*.log
+backups
+docker/astronAgent/config/*/logs
