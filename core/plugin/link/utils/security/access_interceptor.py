@@ -176,3 +176,21 @@ def is_local_url(url: str) -> bool:
 
     except Exception:
         return False
+
+
+def is_trusted_internal_mcp_url(url: str) -> bool:
+    """Return true only for an exact host:port entry in MCP_INTERNAL_ALLOWLIST."""
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return False
+        default_port = 443 if parsed.scheme == "https" else 80
+        authority = f"{parsed.hostname.lower()}:{parsed.port or default_port}"
+        allowed = {
+            item.strip().lower()
+            for item in os.getenv("MCP_INTERNAL_ALLOWLIST", "").split(",")
+            if item.strip()
+        }
+        return authority in allowed
+    except (TypeError, ValueError):
+        return False

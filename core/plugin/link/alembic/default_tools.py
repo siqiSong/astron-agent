@@ -1,5 +1,7 @@
 """Built-in default tool seed data for link migrations and startup repair."""
 
+import json
+
 DEFAULT_TOOL_INSERT_STATEMENTS = [
     """INSERT INTO tools_schema (app_id, tool_id, name, description, open_api_schema, create_at, update_at)
 VALUES (
@@ -42,3 +44,93 @@ VALUES (
   '2025-10-24 10:00:00'
 );""",
 ]
+
+
+def _table_tool_statement(
+    tool_id, name, description, path, operation_id, properties, required, response_properties
+):
+    # The open-source Agent exposes a field to the model only when x-display is
+    # true (or x-from is explicitly zero). Keep both markers for compatibility
+    # with current and older Agent parsers.
+    model_properties = {
+        key: {**value, "x-display": True, "x-from": 0}
+        for key, value in properties.items()
+    }
+    model_response_properties = {
+        key: {**value, "x-display": True}
+        for key, value in response_properties.items()
+    }
+    schema = {
+        "openapi": "3.1.0",
+        "info": {"title": name, "version": "1.0.0", "x-is-official": True},
+        "servers": [{"url": "http://core-aitools:18669"}],
+        "paths": {
+            path: {
+                "post": {
+                    "operationId": operation_id,
+                    "summary": name,
+                    "description": description,
+                    "requestBody": {
+                        "required": True,
+                        "content": {"application/json": {"schema": {"type": "object", "properties": model_properties, "required": required}}},
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "success",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "code": {"type": "integer", "description": "状态码", "x-display": True},
+                                            "sid": {"type": "string", "description": "会话 ID", "x-display": True},
+                                            "message": {"type": "string", "description": "操作消息", "x-display": True},
+                                            "data": {
+                                                "type": "object",
+                                                "description": "结果",
+                                                "properties": model_response_properties,
+                                                "x-display": True,
+                                            },
+                                        },
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+    encoded = json.dumps(schema, ensure_ascii=False, separators=(",", ":")).replace("'", "''")
+    return f"""INSERT INTO tools_schema (app_id, tool_id, name, description, version, is_deleted, open_api_schema, create_at, update_at)
+VALUES ('appid', '{tool_id}', '{name}', '{description}', 'V1.0', 0, '{encoded}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), open_api_schema=VALUES(open_api_schema), update_at=CURRENT_TIMESTAMP;"""
+
+
+_rows_property = {"type": "array", "items": {"type": "object", "additionalProperties": True}, "description": "结构化表格行"}
+_table_extract_outputs = {
+    "rows": _rows_property,
+    "json": {"type": "string", "description": "结构化表格行的 JSON 字符串"},
+    "markdown": {"type": "string", "description": "可直接输出的 Markdown 表格"},
+    "table": {"type": "object", "description": "列定义、行数、工作表和范围等元数据"},
+}
+_chart_outputs = {
+    "path": {"type": "string", "description": "图片同源相对路径"},
+    "image_url": {"type": "string", "description": "图片下载地址"},
+    "image_url_md": {"type": "string", "description": "图片下载地址 Markdown 格式"},
+    "mapping": {"type": "object", "description": "图表字段映射"},
+}
+_excel_outputs = {
+    "path": {"type": "string", "description": "文件同源相对路径"},
+    "file_url": {"type": "string", "description": "Excel 下载地址"},
+    "file_url_md": {"type": "string", "description": "Excel 下载地址 Markdown 格式"},
+    "summary": {"type": "object", "description": "生成行列数、工作表和范围"},
+}
+TABLE_TOOL_INSERT_STATEMENTS = [
+    _table_tool_statement("tool@tableextractv1", "表格数据提取", "读取 XLS、XLSX、CSV 并返回结构化数据", "/aitools/v1/table_extract", "table_extract_v1", {"excel_url": {"type": "string"}, "url": {"type": "string"}, "sheet_name": {"type": "string"}, "range": {"type": "string"}, "encoding": {"type": "string"}}, [], _table_extract_outputs),
+    _table_tool_statement("tool@tablebarv1", "可视化图表-柱形图", "根据结构化表格行生成 SVG 柱形图", "/aitools/v1/bar_chart", "table_bar_v1", {"data": _rows_property, "category_field": {"type": "string"}, "value_fields": {"type": "array", "items": {"type": "string"}}, "title": {"type": "string"}, "direction": {"type": "string"}}, ["data"], _chart_outputs),
+    _table_tool_statement("tool@tablepiev1", "可视化图表-饼图", "根据结构化表格行生成 SVG 饼图或圆环图", "/aitools/v1/pie_chart", "table_pie_v1", {"data": _rows_property, "category_field": {"type": "string"}, "value_field": {"type": "string"}, "title": {"type": "string"}, "donut": {"type": "boolean"}}, ["data"], _chart_outputs),
+    _table_tool_statement("tool@excelgeneratev1", "Excel表格生成", "根据结构化表格行生成可下载 XLSX", "/aitools/v1/excel_generate", "excel_generate_v1", {"data": _rows_property, "columns": {"type": "array", "items": {"type": "string"}}, "sheet_name": {"type": "string"}, "start_cell": {"type": "string"}, "freeze_header": {"type": "boolean"}, "auto_filter": {"type": "boolean"}}, ["data"], _excel_outputs),
+]
+
+DEFAULT_TOOL_INSERT_STATEMENTS.extend(TABLE_TOOL_INSERT_STATEMENTS)

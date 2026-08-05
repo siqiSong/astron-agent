@@ -102,12 +102,12 @@ const PluginStoreDetail: React.FC = (): ReactElement => {
     const validate = (items: DebugInput[]): DebugInput[] => {
       const newItems = items.map((item: DebugInput) => {
         // 校验当前项的 name 字段是否为空
-        if (item?.type !== 'object' && item?.type !== 'array') {
-          if (
-            item?.required &&
-            item?.type === 'string' &&
-            !item?.default?.toString().trim()
-          ) {
+        if (item?.type !== 'array') {
+          const emptyValue =
+            item?.default === undefined ||
+            item?.default === null ||
+            (typeof item.default === 'string' && !item.default.trim());
+          if (item?.required && emptyValue) {
             item.defaultErrMsg = t('common.valueCannotBeEmpty');
             flag = false;
           } else {

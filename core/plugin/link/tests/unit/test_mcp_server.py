@@ -29,6 +29,7 @@ def mcp_server() -> Iterator[Any]:
         "plugin.link.utils.security.access_interceptor": Mock(
             is_in_blacklist=Mock(return_value=False),
             is_local_url=Mock(return_value=False),
+            is_trusted_internal_mcp_url=Mock(return_value=False),
         ),
     }
 
