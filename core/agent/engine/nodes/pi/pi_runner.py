@@ -13,7 +13,7 @@ from common.otlp.trace.span import Span
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel
 
-from agent.api.schemas.agent_event import AgentEventBase, AgentEventV1
+from agent.api.schemas.agent_event import AgentEventV1
 from agent.api.schemas.agent_response import AgentResponse, CotStep
 from agent.api.schemas.llm_message import LLMMessage
 from agent.engine.nodes.pi.event_adapter import PiEventAdapter, PiEventAdapterError
