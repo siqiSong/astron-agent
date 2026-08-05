@@ -118,7 +118,7 @@ AgentEventV1: TypeAlias = Annotated[
     Field(discriminator="type"),
 ]
 
-_AGENT_EVENT_V1_ADAPTER = TypeAdapter(AgentEventV1)
+_AGENT_EVENT_V1_ADAPTER: TypeAdapter[AgentEventV1] = TypeAdapter(AgentEventV1)
 
 
 def validate_agent_event_v1(value: Any) -> AgentEventV1:

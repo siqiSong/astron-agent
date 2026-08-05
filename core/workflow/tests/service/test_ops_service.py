@@ -1,20 +1,25 @@
 from datetime import datetime, timezone
+from typing import Any, Callable
 from unittest.mock import Mock
+
+import pytest
 
 from workflow.extensions.otlp.log_trace.workflow_log import WorkflowLog
 from workflow.service import ops_service
 
 
 class ImmediateThread:
-    def __init__(self, target, daemon):
+    def __init__(self, target: Callable[[], Any], daemon: bool) -> None:
         self.target = target
         self.daemon = daemon
 
-    def start(self):
+    def start(self) -> None:
         self.target()
 
 
-def test_trace_is_written_directly_to_elasticsearch_when_configured(monkeypatch):
+def test_trace_is_written_directly_to_elasticsearch_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("WORKFLOW_TRACE_ES_URL", "http://elasticsearch:9200/")
     monkeypatch.setenv("WORKFLOW_TRACE_ES_INDEX_PREFIX", "spark-agent-builder-")
     monkeypatch.setattr(ops_service.threading, "Thread", ImmediateThread)
@@ -39,7 +44,9 @@ def test_trace_is_written_directly_to_elasticsearch_when_configured(monkeypatch)
     kafka.assert_not_called()
 
 
-def test_trace_reporting_does_nothing_when_all_persistence_is_disabled(monkeypatch):
+def test_trace_reporting_does_nothing_when_all_persistence_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("WORKFLOW_TRACE_ES_URL", raising=False)
     monkeypatch.setenv("KAFKA_ENABLE", "0")
     thread = Mock()

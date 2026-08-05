@@ -1,4 +1,5 @@
 import json
+from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -111,8 +112,8 @@ async def test_process_stream_response_keeps_tool_payload_out_of_reasoning() -> 
     ]
 
     class FakeContent:
-        def __aiter__(self):
-            async def iterate():
+        def __aiter__(self) -> AsyncIterator[bytes]:
+            async def iterate() -> AsyncIterator[bytes]:
                 for frame in frames:
                     yield f"data:{json.dumps(frame)}".encode()
 
@@ -128,5 +129,6 @@ async def test_process_stream_response_keeps_tool_payload_out_of_reasoning() -> 
         )
 
     assert reasoning == []
+    assert put.await_args is not None
     forwarded = put.await_args.args[4]
     assert forwarded["choices"][0]["delta"]["agent_event"] == event

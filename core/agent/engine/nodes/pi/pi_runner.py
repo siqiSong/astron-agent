@@ -3,7 +3,7 @@ import inspect
 import json
 import os
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass, field
 from typing import Any
@@ -707,7 +707,7 @@ class PiRunner:
         state: _PiRunState,
         timeout: aiohttp.ClientTimeout,
         span: Span,
-    ) -> AsyncIterator[AgentResponse]:
+    ) -> AsyncGenerator[AgentResponse, None]:
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.ws_connect(
                 self.runtime_url,
@@ -769,22 +769,21 @@ class PiRunner:
                 async for response in runtime_responses:
                     yield response
         except (asyncio.CancelledError, Exception) as error:
-            is_cancelled = isinstance(error, asyncio.CancelledError)
-            if is_cancelled:
+            if isinstance(error, asyncio.CancelledError):
                 responses = self._cancelled_run_responses(state.wait_calls, span=span)
-            else:
-                wait_message, code, message = self._failed_run_details(error)
-                responses = self._failed_run_responses(
-                    state.wait_calls,
-                    wait_message=wait_message,
-                    code=code,
-                    message=message,
-                    span=span,
-                )
+                for response in responses:
+                    yield response
+                raise
+            wait_message, code, message = self._failed_run_details(error)
+            responses = self._failed_run_responses(
+                state.wait_calls,
+                wait_message=wait_message,
+                code=code,
+                message=message,
+                span=span,
+            )
             for response in responses:
                 yield response
-            if is_cancelled:
-                raise
             raise AgentInternalExc(message) from error
 
         if not state.completed:

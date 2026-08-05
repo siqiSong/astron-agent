@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -207,7 +207,7 @@ async def test_closing_run_closes_nested_runtime_stream(
 ) -> None:
     nested_closed = asyncio.Event()
 
-    async def nested_runtime_stream() -> AsyncIterator[AgentResponse]:
+    async def nested_runtime_stream() -> AsyncGenerator[AgentResponse, None]:
         try:
             yield AgentResponse(
                 typ="content",
