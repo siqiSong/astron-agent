@@ -2533,7 +2533,7 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
         dealWithUrl(modelConfig, serviceId); // reuse existing method
     }
 
-    /** MCP: copy mcpServerIds to mcpServerUrls safely (null & empty check included) */
+    /** Normalize legacy MCP URL values out of the database-ID list. */
     private void copyMcpServerIdsToUrls(JSONObject plugin) {
         JSONArray mcpServerIds = plugin.getJSONArray("mcpServerIds");
         if (mcpServerIds == null || mcpServerIds.isEmpty()) {
@@ -2544,12 +2544,21 @@ public class WorkflowService extends ServiceImpl<WorkflowMapper, Workflow> {
             mcpServerUrls = new JSONArray();
             plugin.put("mcpServerUrls", mcpServerUrls);
         }
+        JSONArray normalizedIds = new JSONArray();
         for (int i = 0; i < mcpServerIds.size(); i++) {
-            String server = mcpServerIds.getString(i);
-            if (StringUtils.isNotBlank(server)) {
-                mcpServerUrls.add(server);
+            String server = StringUtils.trim(mcpServerIds.getString(i));
+            if (StringUtils.isBlank(server)) {
+                continue;
+            }
+            if (server.startsWith("http://") || server.startsWith("https://")) {
+                if (!mcpServerUrls.contains(server)) {
+                    mcpServerUrls.add(server);
+                }
+            } else if (!normalizedIds.contains(server)) {
+                normalizedIds.add(server);
             }
         }
+        plugin.put("mcpServerIds", normalizedIds);
     }
 
     private List<String> parseMcpServerUrls(String mcpServerUrls) {

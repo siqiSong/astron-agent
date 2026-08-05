@@ -94,4 +94,22 @@ class WorkflowServiceMcpRuntimeConfigTest {
 
         assertThat(result).isTrue();
     }
+
+    @Test
+    void copyMcpServerIdsToUrlsMovesOnlyUrlLikeLegacyValues() {
+        JSONObject plugin = new JSONObject()
+                .fluentPut("mcpServerIds", new JSONArray(List.of(
+                        "database-server-id",
+                        "http://core-aitools:18669/mcp/sse",
+                        "https://mcp.example.com/sse")))
+                .fluentPut("mcpServerUrls", new JSONArray(List.of(
+                        "https://mcp.example.com/sse")));
+
+        ReflectionTestUtils.invokeMethod(workflowService, "copyMcpServerIdsToUrls", plugin);
+
+        assertThat(plugin.getJSONArray("mcpServerIds"))
+                .containsExactly("database-server-id");
+        assertThat(plugin.getJSONArray("mcpServerUrls"))
+                .containsExactly("https://mcp.example.com/sse", "http://core-aitools:18669/mcp/sse");
+    }
 }

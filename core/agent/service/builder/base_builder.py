@@ -76,7 +76,27 @@ class BaseApiBuilder(BaseModel):
     ) -> list[Union[LinkPlugin, McpPlugin, WorkflowPlugin, SkillPlugin]]:
 
         with self.span.start("BuildPlugins") as sp:
-            mcp_server_urls = [url for url in mcp_server_urls if url and url.strip()]
+            normalized_ids: list[str] = []
+            normalized_urls: list[str] = []
+            for server in mcp_server_ids:
+                if not isinstance(server, str) or not server.strip():
+                    continue
+                server = server.strip()
+                target = (
+                    normalized_urls
+                    if server.startswith(("http://", "https://"))
+                    else normalized_ids
+                )
+                if server not in target:
+                    target.append(server)
+            for server in mcp_server_urls:
+                if not isinstance(server, str) or not server.strip():
+                    continue
+                server = server.strip()
+                if server not in normalized_urls:
+                    normalized_urls.append(server)
+            mcp_server_ids = normalized_ids
+            mcp_server_urls = normalized_urls
 
             plugins: list[Union[LinkPlugin, McpPlugin, WorkflowPlugin, SkillPlugin]] = (
                 []
