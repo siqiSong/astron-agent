@@ -21,6 +21,35 @@ const segmentStart = seq => ({
   segmentId: 'turn-1-text-0',
   source: 'text',
   channel: 'pending',
+  visibility: 'user',
+});
+
+const executionStarted = seq => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'execution_start',
+  startedAt: 100,
+});
+
+const usageUpdated = seq => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'usage_update',
+  inputTokens: 4,
+  outputTokens: 6,
+  totalTokens: 10,
+});
+
+const executionFinished = (seq, status = 'success') => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'execution_end',
+  status,
+  finishedAt: 150,
+  durationMs: 50,
 });
 
 const segmentDelta = (seq, delta = 'Checking') => ({
@@ -171,6 +200,77 @@ test('parser accepts valid events and rejects unknown or malformed versions', ()
     }),
     null
   );
+});
+
+test('parser accepts lifecycle events without turnId', () => {
+  assert.deepEqual(parseAgentEvent(executionStarted(1)), executionStarted(1));
+  assert.deepEqual(parseAgentEvent(usageUpdated(2)), usageUpdated(2));
+  assert.deepEqual(parseAgentEvent(executionFinished(3)), executionFinished(3));
+});
+
+test('public parser rejects non-user segment visibility', () => {
+  assert.equal(
+    parseAgentEvent({ ...segmentStart(1), visibility: 'runtime' }),
+    null
+  );
+  assert.equal(
+    parseAgentEvent({ ...segmentStart(1), visibility: 'debug' }),
+    null
+  );
+});
+
+test('missing v1 visibility is normalized to user during rolling deploy', () => {
+  const legacy = { ...segmentStart(1) };
+  delete legacy.visibility;
+  assert.deepEqual(parseAgentEvent(legacy), segmentStart(1));
+});
+
+test('execution lifecycle and usage reduce into one execution record', () => {
+  let state = createAgentStreamState();
+  state = reduceAgentEvent(state, executionStarted(1));
+  state = reduceAgentEvent(state, usageUpdated(2));
+  state = reduceAgentEvent(state, {
+    version: 1,
+    runId: 'run-1',
+    seq: 3,
+    type: 'execution_error',
+    code: 'PI_RUNTIME_ERROR',
+    message: 'Pi agent runtime failed',
+    occurredAt: 140,
+  });
+  state = reduceAgentEvent(state, executionFinished(4, 'error'));
+
+  assert.deepEqual(state.executions['run-1'], {
+    runId: 'run-1',
+    status: 'error',
+    startedAt: 100,
+    finishedAt: 150,
+    durationMs: 50,
+    usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+    error: {
+      code: 'PI_RUNTIME_ERROR',
+      message: 'Pi agent runtime failed',
+      occurredAt: 140,
+    },
+  });
+});
+
+test('persisted schema version 2 migrates to version 3', () => {
+  let current = createAgentStreamState();
+  current = reduceAgentEvent(current, segmentStart(1));
+  const version2 = {
+    ...current,
+    schemaVersion: 2,
+  };
+  delete version2.executions;
+  for (const segment of Object.values(version2.segments)) {
+    delete segment.visibility;
+  }
+
+  const migrated = parseAgentStreamState(version2);
+  assert.equal(migrated?.schemaVersion, 3);
+  assert.deepEqual(migrated?.executions, {});
+  assert.equal(Object.values(migrated?.segments ?? {})[0]?.visibility, 'user');
 });
 
 test('state remains JSON serializable after every event type', () => {

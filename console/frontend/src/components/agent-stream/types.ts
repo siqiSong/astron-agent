@@ -8,40 +8,51 @@ export type AgentCommitReason =
   | 'error';
 export type AgentFinalizeReason = AgentCommitReason | 'transport_closed';
 export type AgentToolStatus = 'running' | 'success' | 'error' | 'cancelled';
+export type AgentExecutionStatus = AgentToolStatus;
+export type AgentVisibility = 'user' | 'debug' | 'runtime';
 
 interface AgentEventBase {
   version: 1;
   runId: string;
   seq: number;
+}
+
+interface AgentTurnEventBase extends AgentEventBase {
   turnId: string;
 }
 
-export interface AgentSegmentStartEvent extends AgentEventBase {
+export interface AgentExecutionStartEvent extends AgentEventBase {
+  type: 'execution_start';
+  startedAt: number;
+}
+
+export interface AgentSegmentStartEvent extends AgentTurnEventBase {
   type: 'segment_start';
   segmentId: string;
   source: AgentSegmentSource;
   channel: AgentSegmentChannel;
+  visibility: AgentVisibility;
 }
 
-export interface AgentSegmentDeltaEvent extends AgentEventBase {
+export interface AgentSegmentDeltaEvent extends AgentTurnEventBase {
   type: 'segment_delta';
   segmentId: string;
   delta: string;
 }
 
-export interface AgentSegmentEndEvent extends AgentEventBase {
+export interface AgentSegmentEndEvent extends AgentTurnEventBase {
   type: 'segment_end';
   segmentId: string;
 }
 
-export interface AgentTurnCommitEvent extends AgentEventBase {
+export interface AgentTurnCommitEvent extends AgentTurnEventBase {
   type: 'turn_commit';
   channel: AgentCommitChannel;
   partial: boolean;
   reason: AgentCommitReason;
 }
 
-export interface AgentToolStartEvent extends AgentEventBase {
+export interface AgentToolStartEvent extends AgentTurnEventBase {
   type: 'tool_start';
   callId: string;
   name: string;
@@ -50,13 +61,13 @@ export interface AgentToolStartEvent extends AgentEventBase {
   startedAt?: number;
 }
 
-export interface AgentToolProgressEvent extends AgentEventBase {
+export interface AgentToolProgressEvent extends AgentTurnEventBase {
   type: 'tool_progress';
   callId: string;
   summary: string;
 }
 
-export interface AgentToolFinishEvent extends AgentEventBase {
+export interface AgentToolFinishEvent extends AgentTurnEventBase {
   type: 'tool_finish';
   callId: string;
   name?: string;
@@ -66,14 +77,61 @@ export interface AgentToolFinishEvent extends AgentEventBase {
   durationMs?: number;
 }
 
+export interface AgentUsageUpdateEvent extends AgentEventBase {
+  type: 'usage_update';
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface AgentExecutionErrorEvent extends AgentEventBase {
+  type: 'execution_error';
+  code: string;
+  message: string;
+  occurredAt: number;
+}
+
+export interface AgentExecutionEndEvent extends AgentEventBase {
+  type: 'execution_end';
+  status: Exclude<AgentExecutionStatus, 'running'>;
+  finishedAt: number;
+  durationMs: number;
+}
+
 export type AgentEventV1 =
+  | AgentExecutionStartEvent
   | AgentSegmentStartEvent
   | AgentSegmentDeltaEvent
   | AgentSegmentEndEvent
   | AgentTurnCommitEvent
   | AgentToolStartEvent
   | AgentToolProgressEvent
-  | AgentToolFinishEvent;
+  | AgentToolFinishEvent
+  | AgentUsageUpdateEvent
+  | AgentExecutionErrorEvent
+  | AgentExecutionEndEvent;
+
+export interface AgentUsage {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+}
+
+export interface AgentExecutionError {
+  code: string;
+  message: string;
+  occurredAt: number;
+}
+
+export interface AgentExecutionRecord {
+  runId: string;
+  status: AgentExecutionStatus;
+  startedAt?: number;
+  finishedAt?: number;
+  durationMs?: number;
+  usage?: AgentUsage;
+  error?: AgentExecutionError;
+}
 
 export interface AgentSegment {
   runId: string;
@@ -81,6 +139,7 @@ export interface AgentSegment {
   turnId: string;
   source: AgentSegmentSource;
   channel: AgentSegmentChannel;
+  visibility: AgentVisibility;
   text: string;
   order: number;
   ended: boolean;
@@ -104,8 +163,9 @@ export interface AgentToolRecord {
 }
 
 export interface AgentStreamState {
-  schemaVersion: 2;
+  schemaVersion: 3;
   hasStructuredEvents: boolean;
+  executions: Record<string, AgentExecutionRecord>;
   segments: Record<string, AgentSegment>;
   tools: Record<string, AgentToolRecord>;
   lastSeqByRun: Record<string, number>;

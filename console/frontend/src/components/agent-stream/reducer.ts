@@ -2,6 +2,7 @@ import type {
   AgentCommitChannel,
   AgentCommitReason,
   AgentEventV1,
+  AgentExecutionStatus,
   AgentFinalizeReason,
   AgentReasoningTimelineItem,
   AgentSegmentChannel,
@@ -20,6 +21,12 @@ const isNonEmptyString = (value: unknown): value is string =>
 
 const isOptionalFiniteNumber = (value: unknown): boolean =>
   value === undefined || (typeof value === 'number' && Number.isFinite(value));
+
+const isNonNegativeSafeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+
+const isOptionalNonNegativeSafeInteger = (value: unknown): boolean =>
+  value === undefined || isNonNegativeSafeInteger(value);
 
 const isSegmentSource = (value: unknown): value is AgentSegmentSource =>
   value === 'text' || value === 'thinking';
@@ -41,6 +48,9 @@ const isFinishedToolStatus = (
 ): value is Exclude<AgentToolStatus, 'running'> =>
   value === 'success' || value === 'error' || value === 'cancelled';
 
+const isExecutionStatus = (value: unknown): value is AgentExecutionStatus =>
+  value === 'running' || isFinishedToolStatus(value);
+
 const hasOwn = (value: Record<string, unknown>, key: string): boolean =>
   Object.prototype.hasOwnProperty.call(value, key);
 
@@ -51,6 +61,7 @@ const isAgentSegmentRecord = (value: unknown): boolean =>
   isNonEmptyString(value.turnId) &&
   isSegmentSource(value.source) &&
   isSegmentChannel(value.channel) &&
+  value.visibility === 'user' &&
   typeof value.text === 'string' &&
   typeof value.order === 'number' &&
   Number.isSafeInteger(value.order) &&
@@ -67,6 +78,96 @@ const isAgentToolRecord = (value: unknown): boolean =>
   typeof value.order === 'number' &&
   Number.isSafeInteger(value.order);
 
+const isAgentExecutionRecord = (value: unknown): boolean => {
+  if (
+    !isRecord(value) ||
+    !isNonEmptyString(value.runId) ||
+    !isExecutionStatus(value.status) ||
+    !isOptionalNonNegativeSafeInteger(value.startedAt) ||
+    !isOptionalNonNegativeSafeInteger(value.finishedAt) ||
+    !isOptionalNonNegativeSafeInteger(value.durationMs)
+  ) {
+    return false;
+  }
+  if (
+    value.usage !== undefined &&
+    (!isRecord(value.usage) ||
+      !isNonNegativeSafeInteger(value.usage.inputTokens) ||
+      !isNonNegativeSafeInteger(value.usage.outputTokens) ||
+      !isNonNegativeSafeInteger(value.usage.totalTokens))
+  ) {
+    return false;
+  }
+  return (
+    value.error === undefined ||
+    (isRecord(value.error) &&
+      isNonEmptyString(value.error.code) &&
+      isNonEmptyString(value.error.message) &&
+      isNonNegativeSafeInteger(value.error.occurredAt))
+  );
+};
+
+const hasValidTurnId = (value: Record<string, unknown>): boolean =>
+  isNonEmptyString(value.turnId);
+
+const isValidSegmentStart = (value: Record<string, unknown>): boolean =>
+  hasValidTurnId(value) &&
+  isNonEmptyString(value.segmentId) &&
+  isSegmentSource(value.source) &&
+  isSegmentChannel(value.channel);
+
+const isValidSegmentDelta = (value: Record<string, unknown>): boolean =>
+  hasValidTurnId(value) &&
+  isNonEmptyString(value.segmentId) &&
+  typeof value.delta === 'string';
+
+const isValidSegmentEnd = (value: Record<string, unknown>): boolean =>
+  hasValidTurnId(value) && isNonEmptyString(value.segmentId);
+
+const isValidTurnCommit = (value: Record<string, unknown>): boolean =>
+  hasValidTurnId(value) &&
+  isCommitChannel(value.channel) &&
+  typeof value.partial === 'boolean' &&
+  isCommitReason(value.reason);
+
+const isValidToolStart = (value: Record<string, unknown>): boolean =>
+  hasValidTurnId(value) &&
+  isNonEmptyString(value.callId) &&
+  isNonEmptyString(value.name) &&
+  hasOwn(value, 'arguments') &&
+  (value.status === undefined || value.status === 'running') &&
+  isOptionalFiniteNumber(value.startedAt);
+
+const isValidToolProgress = (value: Record<string, unknown>): boolean =>
+  hasValidTurnId(value) &&
+  isNonEmptyString(value.callId) &&
+  typeof value.summary === 'string';
+
+const isValidToolFinish = (value: Record<string, unknown>): boolean =>
+  hasValidTurnId(value) &&
+  isNonEmptyString(value.callId) &&
+  (value.name === undefined || isNonEmptyString(value.name)) &&
+  isFinishedToolStatus(value.status) &&
+  isOptionalFiniteNumber(value.finishedAt) &&
+  isOptionalFiniteNumber(value.durationMs);
+
+const isValidUsageUpdate = (value: Record<string, unknown>): boolean =>
+  isNonNegativeSafeInteger(value.inputTokens) &&
+  isNonNegativeSafeInteger(value.outputTokens) &&
+  isNonNegativeSafeInteger(value.totalTokens);
+
+const isValidExecutionError = (value: Record<string, unknown>): boolean =>
+  isNonEmptyString(value.code) &&
+  value.code.length <= 100 &&
+  isNonEmptyString(value.message) &&
+  value.message.length <= 500 &&
+  isNonNegativeSafeInteger(value.occurredAt);
+
+const isValidExecutionEnd = (value: Record<string, unknown>): boolean =>
+  isFinishedToolStatus(value.status) &&
+  isNonNegativeSafeInteger(value.finishedAt) &&
+  isNonNegativeSafeInteger(value.durationMs);
+
 export const parseAgentEvent = (value: unknown): AgentEventV1 | null => {
   if (
     !isRecord(value) ||
@@ -74,71 +175,49 @@ export const parseAgentEvent = (value: unknown): AgentEventV1 | null => {
     !isNonEmptyString(value.runId) ||
     typeof value.seq !== 'number' ||
     !Number.isSafeInteger(value.seq) ||
-    !isNonEmptyString(value.turnId) ||
+    value.seq <= 0 ||
     !isNonEmptyString(value.type)
   ) {
     return null;
   }
 
   switch (value.type) {
-    case 'segment_start':
-      if (
-        !isNonEmptyString(value.segmentId) ||
-        !isSegmentSource(value.source) ||
-        !isSegmentChannel(value.channel)
-      ) {
-        return null;
-      }
+    case 'execution_start':
+      if (!isNonNegativeSafeInteger(value.startedAt)) return null;
       break;
+    case 'segment_start':
+      if (!isValidSegmentStart(value)) return null;
+      if ((value.visibility ?? 'user') !== 'user') return null;
+      return {
+        ...value,
+        visibility: 'user',
+      } as unknown as AgentEventV1;
     case 'segment_delta':
-      if (
-        !isNonEmptyString(value.segmentId) ||
-        typeof value.delta !== 'string'
-      ) {
-        return null;
-      }
+      if (!isValidSegmentDelta(value)) return null;
       break;
     case 'segment_end':
-      if (!isNonEmptyString(value.segmentId)) return null;
+      if (!isValidSegmentEnd(value)) return null;
       break;
     case 'turn_commit':
-      if (
-        !isCommitChannel(value.channel) ||
-        typeof value.partial !== 'boolean' ||
-        !isCommitReason(value.reason)
-      ) {
-        return null;
-      }
+      if (!isValidTurnCommit(value)) return null;
       break;
     case 'tool_start':
-      if (
-        !isNonEmptyString(value.callId) ||
-        !isNonEmptyString(value.name) ||
-        !hasOwn(value, 'arguments') ||
-        (value.status !== undefined && value.status !== 'running') ||
-        !isOptionalFiniteNumber(value.startedAt)
-      ) {
-        return null;
-      }
+      if (!isValidToolStart(value)) return null;
       break;
     case 'tool_progress':
-      if (
-        !isNonEmptyString(value.callId) ||
-        typeof value.summary !== 'string'
-      ) {
-        return null;
-      }
+      if (!isValidToolProgress(value)) return null;
       break;
     case 'tool_finish':
-      if (
-        !isNonEmptyString(value.callId) ||
-        (value.name !== undefined && !isNonEmptyString(value.name)) ||
-        !isFinishedToolStatus(value.status) ||
-        !isOptionalFiniteNumber(value.finishedAt) ||
-        !isOptionalFiniteNumber(value.durationMs)
-      ) {
-        return null;
-      }
+      if (!isValidToolFinish(value)) return null;
+      break;
+    case 'usage_update':
+      if (!isValidUsageUpdate(value)) return null;
+      break;
+    case 'execution_error':
+      if (!isValidExecutionError(value)) return null;
+      break;
+    case 'execution_end':
+      if (!isValidExecutionEnd(value)) return null;
       break;
     default:
       return null;
@@ -148,8 +227,9 @@ export const parseAgentEvent = (value: unknown): AgentEventV1 | null => {
 };
 
 export const createAgentStreamState = (): AgentStreamState => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   hasStructuredEvents: false,
+  executions: {},
   segments: {},
   tools: {},
   lastSeqByRun: {},
@@ -192,34 +272,56 @@ const applyToolFinish = (
 export const parseAgentStreamState = (
   value: unknown
 ): AgentStreamState | null => {
+  if (!isRecord(value)) return null;
+  const normalized =
+    value.schemaVersion === 2
+      ? {
+          ...value,
+          schemaVersion: 3,
+          executions: {},
+          segments: isRecord(value.segments)
+            ? Object.fromEntries(
+                Object.entries(value.segments).map(([key, segment]) => [
+                  key,
+                  isRecord(segment)
+                    ? { ...segment, visibility: 'user' }
+                    : segment,
+                ])
+              )
+            : value.segments,
+        }
+      : value;
   if (
-    !isRecord(value) ||
-    value.schemaVersion !== 2 ||
-    typeof value.hasStructuredEvents !== 'boolean' ||
-    !isRecord(value.segments) ||
-    !isRecord(value.tools) ||
-    !isRecord(value.lastSeqByRun) ||
-    typeof value.nextOrder !== 'number' ||
-    !Number.isSafeInteger(value.nextOrder) ||
-    !isRecord(value.hasObservedToolByTurn) ||
-    typeof value.interrupted !== 'boolean' ||
-    (value.interruptionReason !== null &&
-      !isCommitReason(value.interruptionReason) &&
-      value.interruptionReason !== 'transport_closed')
+    normalized.schemaVersion !== 3 ||
+    typeof normalized.hasStructuredEvents !== 'boolean' ||
+    !isRecord(normalized.executions) ||
+    !isRecord(normalized.segments) ||
+    !isRecord(normalized.tools) ||
+    !isRecord(normalized.lastSeqByRun) ||
+    typeof normalized.nextOrder !== 'number' ||
+    !Number.isSafeInteger(normalized.nextOrder) ||
+    !isRecord(normalized.hasObservedToolByTurn) ||
+    typeof normalized.interrupted !== 'boolean' ||
+    (normalized.interruptionReason !== null &&
+      !isCommitReason(normalized.interruptionReason) &&
+      normalized.interruptionReason !== 'transport_closed')
   ) {
     return null;
   }
   if (
-    !Object.values(value.segments).every(isAgentSegmentRecord) ||
-    !Object.values(value.tools).every(isAgentToolRecord) ||
-    !Object.values(value.lastSeqByRun).every(
+    !Object.values(normalized.executions).every(isAgentExecutionRecord) ||
+    !Object.values(normalized.segments).every(isAgentSegmentRecord) ||
+    !Object.values(normalized.tools).every(isAgentToolRecord) ||
+    !Object.values(normalized.lastSeqByRun).every(
       seq => typeof seq === 'number' && Number.isSafeInteger(seq) && seq >= 0
     ) ||
-    !Object.values(value.hasObservedToolByTurn).every(flag => flag === true)
+    !Object.values(normalized.hasObservedToolByTurn).every(
+      flag => flag === true
+    )
   ) {
     return null;
   }
-  return value as unknown as AgentStreamState;
+  return normalized as unknown as AgentStreamState;
 };
 
 const acceptEvent = (
@@ -245,6 +347,19 @@ export const reduceAgentEvent = (
   const order = state.nextOrder;
 
   switch (event.type) {
+    case 'execution_start':
+      return {
+        ...next,
+        executions: {
+          ...state.executions,
+          [event.runId]: {
+            ...state.executions[event.runId],
+            runId: event.runId,
+            status: 'running',
+            startedAt: event.startedAt,
+          },
+        },
+      };
     case 'segment_start': {
       const key = entityKey(event.runId, event.segmentId);
       if (state.segments[key]) return next;
@@ -258,6 +373,7 @@ export const reduceAgentEvent = (
             turnId: event.turnId,
             source: event.source,
             channel: event.channel,
+            visibility: event.visibility,
             text: '',
             order,
             ended: false,
@@ -363,6 +479,54 @@ export const reduceAgentEvent = (
         },
       };
     }
+    case 'usage_update':
+      return {
+        ...next,
+        executions: {
+          ...state.executions,
+          [event.runId]: {
+            ...state.executions[event.runId],
+            runId: event.runId,
+            status: state.executions[event.runId]?.status ?? 'running',
+            usage: {
+              inputTokens: event.inputTokens,
+              outputTokens: event.outputTokens,
+              totalTokens: event.totalTokens,
+            },
+          },
+        },
+      };
+    case 'execution_error':
+      return {
+        ...next,
+        executions: {
+          ...state.executions,
+          [event.runId]: {
+            ...state.executions[event.runId],
+            runId: event.runId,
+            status: 'error',
+            error: {
+              code: event.code,
+              message: event.message,
+              occurredAt: event.occurredAt,
+            },
+          },
+        },
+      };
+    case 'execution_end':
+      return {
+        ...next,
+        executions: {
+          ...state.executions,
+          [event.runId]: {
+            ...state.executions[event.runId],
+            runId: event.runId,
+            status: event.status,
+            finishedAt: event.finishedAt,
+            durationMs: event.durationMs,
+          },
+        },
+      };
   }
 };
 
