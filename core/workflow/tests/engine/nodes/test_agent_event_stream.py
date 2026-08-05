@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from workflow.consts.engine.chat_status import SparkLLMStatus
 from workflow.consts.engine.template import TemplateType
 from workflow.engine.entities.variable_pool import VariablePool
 from workflow.engine.nodes.base_node import BaseOutputNode
@@ -13,6 +14,30 @@ from workflow.infra.providers.llm.iflytek_spark.schemas import StreamOutputMsg
 class DummyOutputNode(BaseOutputNode):
     async def async_execute(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError
+
+
+@pytest.mark.parametrize(
+    ("status, template_type, reasoning_content, is_reasoning, content, expected"),
+    [
+        (SparkLLMStatus.END.value, TemplateType.NORMAL, "", False, "", True),
+        (SparkLLMStatus.RUNNING.value, TemplateType.REASONING, "", True, "text", True),
+        (SparkLLMStatus.RUNNING.value, TemplateType.NORMAL, "", False, "text", False),
+    ],
+)
+def test_stream_frame_completion_preserves_reasoning_and_end_conditions(
+    status: int,
+    template_type: TemplateType,
+    reasoning_content: str,
+    is_reasoning: bool,
+    content: str,
+    expected: bool,
+) -> None:
+    assert (
+        DummyOutputNode._stream_frame_is_complete(
+            status, template_type, reasoning_content, is_reasoning, content
+        )
+        is expected
+    )
 
 
 @pytest.mark.asyncio

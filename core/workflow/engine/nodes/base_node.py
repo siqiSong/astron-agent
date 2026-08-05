@@ -837,6 +837,21 @@ class BaseOutputNode(BaseNode):
                     is_end=(status == SparkLLMStatus.END.value),
                 )
 
+    @staticmethod
+    def _stream_frame_is_complete(
+        status: int,
+        template_type: TemplateType,
+        reasoning_content: str,
+        is_reasoning: bool,
+        content: str,
+    ) -> bool:
+        return status == SparkLLMStatus.END.value or (
+            template_type == TemplateType.REASONING
+            and reasoning_content == ""
+            and is_reasoning
+            and bool(content)
+        )
+
     async def _process_queue_output(
         self,
         dep_node_id: str,
@@ -867,12 +882,8 @@ class BaseOutputNode(BaseNode):
         :return: AsyncIterator yielding OutputNodeFrameData
         """
         queue = variable_pool.stream_data[self.node_id][dep_node_id]
-        while True:
+        while not llm_output_status[dep_node_id]:
             try:
-                # If the LLM node has already finished output, break directly
-                # Scenario: User limited output token count, reasoning ended early, avoid waiting for content
-                if llm_output_status[dep_node_id]:
-                    break
                 msg: StreamOutputMsg = await asyncio.wait_for(
                     queue.get(), timeout=QueueTimeout.AsyncQT.value
                 )
@@ -927,11 +938,12 @@ class BaseOutputNode(BaseNode):
                     is_reasoning,
                 ):
                     yield data
-                if status == SparkLLMStatus.END.value or (
-                    template_type == TemplateType.REASONING
-                    and reasoning_content == ""
-                    and is_reasoning
-                    and content
+                if self._stream_frame_is_complete(
+                    status,
+                    template_type,
+                    reasoning_content,
+                    is_reasoning,
+                    content,
                 ):
                     break
             except asyncio.TimeoutError:
