@@ -27,6 +27,8 @@ import {
 export interface RunAgentOptions {
   modelRuntime?: ModelRuntime;
   toolBridge?: ToolBridge;
+  modelTimeoutMs?: number;
+  modelMaxRetries?: number;
   maxWaitSeconds?: number;
   repeatToolCallLimit?: number;
 }
@@ -99,6 +101,12 @@ export async function runPiAgent(
       createWaitTool(options.maxWaitSeconds ?? 120),
     ],
   };
+  const streamFn: StreamFn = (model, streamContext, streamOptions) =>
+    runtime.streamFn(model, streamContext, {
+      ...streamOptions,
+      timeoutMs: options.modelTimeoutMs ?? 120_000,
+      maxRetries: options.modelMaxRetries ?? 1,
+    });
   const stream = agentLoop(
     [currentQuestion(start.question)],
     context,
@@ -110,7 +118,7 @@ export async function runPiAgent(
       beforeToolCall: guard.beforeToolCall,
     },
     signal,
-    runtime.streamFn as StreamFn,
+    streamFn,
   );
 
   let failed = false;

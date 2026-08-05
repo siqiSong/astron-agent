@@ -2,6 +2,8 @@ export interface RuntimeConfig {
   port: number;
   internalSecret: string;
   maxRunMs: number;
+  modelTimeoutMs: number;
+  modelMaxRetries: number;
   maxWaitSeconds: number;
   repeatToolCallLimit: number;
 }
@@ -20,6 +22,20 @@ function positiveNumber(
   const value = Number(raw);
   if (!Number.isFinite(value) || value <= 0) {
     throw new Error(`${name} must be a positive number`);
+  }
+  return value;
+}
+
+function nonNegativeInteger(
+  environment: RuntimeEnvironment,
+  name: string,
+  fallback: number,
+): number {
+  const raw = environment[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative integer`);
   }
   return value;
 }
@@ -47,6 +63,16 @@ export function loadRuntimeConfig(
     port: positiveNumber(environment, "PI_AGENT_PORT", 8090),
     internalSecret,
     maxRunMs: positiveNumber(environment, "PI_AGENT_MAX_RUN_MS", 1_500_000),
+    modelTimeoutMs: positiveNumber(
+      environment,
+      "PI_AGENT_MODEL_TIMEOUT_MS",
+      120_000,
+    ),
+    modelMaxRetries: nonNegativeInteger(
+      environment,
+      "PI_AGENT_MODEL_MAX_RETRIES",
+      1,
+    ),
     maxWaitSeconds: positiveNumber(
       environment,
       "PI_AGENT_MAX_WAIT_SECONDS",

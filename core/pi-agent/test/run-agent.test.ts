@@ -5,6 +5,7 @@ import {
   type Context,
   type Model,
 } from "@earendil-works/pi-ai";
+import type { StreamFn } from "@earendil-works/pi-agent-core";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ServerMessage, StartMessage } from "../src/protocol.js";
@@ -74,8 +75,10 @@ const start: StartMessage = {
 describe("runPiAgent", () => {
   it("uses Pi's native event loop and projects reasoning, text and usage", async () => {
     let capturedContext: Context | undefined;
-    const streamFn = (_model: Model<any>, context: Context) => {
+    let capturedStreamOptions: Parameters<StreamFn>[2];
+    const streamFn: StreamFn = (_model, context, options) => {
       capturedContext = context;
+      capturedStreamOptions = options;
       const stream = new MockAssistantStream();
       queueMicrotask(() => {
         const initial: AssistantMessage = {
@@ -132,6 +135,10 @@ describe("runPiAgent", () => {
     );
 
     expect(capturedContext?.systemPrompt).toBe("Follow the business instruction.");
+    expect(capturedStreamOptions).toMatchObject({
+      timeoutMs: 120_000,
+      maxRetries: 1,
+    });
     expect(capturedContext?.messages).toEqual([
       { role: "user", content: "Earlier question", timestamp: expect.any(Number) },
       {
