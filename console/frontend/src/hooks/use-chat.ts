@@ -102,7 +102,9 @@ const useChat = () => {
     let messageContent: string = '';
     let completeFinalResult: string = '';
     let streamSettled = false;
+    const botMessageId = Date.now() + 1;
     const controller = new AbortController();
+    controllerRef.current.abort('新请求开始');
     controllerRef.current = controller;
     setControllerRef(controllerRef.current);
     if (isnewchat) {
@@ -131,7 +133,7 @@ const useChat = () => {
 
     // 开始流式消息
     startStreamingMessage({
-      id: Date.now() + 1, // 临时ID，完成后会被替换
+      id: botMessageId, // 临时ID，完成后会被替换
       message: '',
       reqType: 'BOT',
       reqId: 0,
@@ -193,7 +195,7 @@ const useChat = () => {
         const agentEvent = parseAgentEvent(choices?.[0]?.delta?.agent_event);
         if (agentEvent) {
           applyAgentStreamEvent(agentEvent);
-          updateStreamingMessage(ans);
+          updateStreamingMessage(botMessageId, ans);
         }
         //工具  模型返回溯源结果
         if (
@@ -205,13 +207,13 @@ const useChat = () => {
           );
           setTraceSource(JSON.stringify(choices[1].delta.tool_calls));
           // 溯源结果更新时，也要更新流式消息
-          updateStreamingMessage(ans);
+          updateStreamingMessage(botMessageId, ans);
         }
         // x1思考链
         if (choices?.[0]?.delta?.reasoning_content) {
           messageContent = '';
           setDeepThinkText(choices?.[0]?.delta?.reasoning_content);
-          updateStreamingMessage(ans);
+          updateStreamingMessage(botMessageId, ans);
           return;
         }
         //进度条
@@ -246,17 +248,21 @@ const useChat = () => {
           if (end) {
             if (ans.length === 0) {
               ans = completeFinalResult || messageContent;
-              updateStreamingMessage(ans);
+              updateStreamingMessage(botMessageId, ans);
             }
             // 完成流式消息，添加sid和id
             streamSettled = true;
-            finishStreamingMessage(sidRef.current, reqIdRef.current);
+            finishStreamingMessage(
+              botMessageId,
+              sidRef.current,
+              reqIdRef.current
+            );
             controller.abort('结束');
             return;
           }
           // 更新流式消息内容
           ans = `${ans}${choices?.[0]?.delta?.content || ''}`;
-          updateStreamingMessage(ans);
+          updateStreamingMessage(botMessageId, ans);
         } else {
           //统一的报错处理
           finalizeAgentStream('error');
@@ -271,10 +277,11 @@ const useChat = () => {
             ? selectLiveContent(current.agentStream)
             : '';
           if (ans || !partialContent) {
-            updateStreamingMessage(ans || ERROR_TEXT);
+            updateStreamingMessage(botMessageId, ans || ERROR_TEXT);
           }
           streamSettled = true;
           finishStreamingMessage(
+            botMessageId,
             sidRef.current,
             reqIdRef.current,
             'error',
@@ -292,7 +299,12 @@ const useChat = () => {
         }
         streamSettled = true;
         finalizeAgentStream('error');
-        finishStreamingMessage(sidRef.current, reqIdRef.current, 'error');
+        finishStreamingMessage(
+          botMessageId,
+          sidRef.current,
+          reqIdRef.current,
+          'error'
+        );
         controllerRef.current.abort('连接错误');
         console.warn('esError', err);
       },
@@ -304,7 +316,12 @@ const useChat = () => {
         }
         streamSettled = true;
         finalizeAgentStream('transport_closed');
-        finishStreamingMessage(sidRef.current, reqIdRef.current, 'error');
+        finishStreamingMessage(
+          botMessageId,
+          sidRef.current,
+          reqIdRef.current,
+          'error'
+        );
       },
     }).catch((err: Error) => {
       if (streamSettled) return;
@@ -314,7 +331,12 @@ const useChat = () => {
       }
       streamSettled = true;
       finalizeAgentStream('error');
-      finishStreamingMessage(sidRef.current, reqIdRef.current, 'error');
+      finishStreamingMessage(
+        botMessageId,
+        sidRef.current,
+        reqIdRef.current,
+        'error'
+      );
       controllerRef.current.abort('请求失败');
       console.error('fetchError', err);
     });

@@ -284,10 +284,11 @@ export interface ChatActions {
   setChatFileListNoReq: (chatFileListNoReq: UploadFileInfo[]) => void; //设置聊天文件列表
   addMessage: (message: MessageListType) => void; //添加消息
   startStreamingMessage: (message: MessageListType) => void; //开始流式消息
-  updateStreamingMessage: (content: string) => void; //更新流式消息内容
+  updateStreamingMessage: (messageId: number, content: string) => void; //更新指定请求拥有的流式消息
   applyAgentStreamEvent: (event: AgentEventV1) => void; //应用结构化 Agent 流事件
   finalizeAgentStream: (reason: AgentFinalizeReason) => void; //保留中断时已收到的 Agent 内容
   finishStreamingMessage: (
+    messageId: number,
     sid?: string,
     reqId?: number,
     status?: Exclude<ChatStreamStatus, 'streaming'>,
