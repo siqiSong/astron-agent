@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from openai.types.chat import ChatCompletionChunk
+from openai.types.chat.chat_completion_chunk import Choice
+from openai.types.completion_usage import CompletionUsage
 
 from workflow.consts.engine.chat_status import SparkLLMStatus
 from workflow.engine.nodes.util.frame_processor import OpenAIFrameProcessor
@@ -63,11 +65,11 @@ def build_chunk(
 ) -> ChatCompletionChunk:
     return ChatCompletionChunk(
         id="chatcmpl-test",
-        choices=choices,
+        choices=[Choice.model_validate(choice) for choice in choices],
         created=0,
         model="openai/test-model",
         object="chat.completion.chunk",
-        usage=usage,
+        usage=CompletionUsage.model_validate(usage) if usage is not None else None,
     )
 
 

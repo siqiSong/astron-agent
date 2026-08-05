@@ -17,6 +17,7 @@ import com.iflytek.astron.console.commons.dto.workflow.WorkflowEventData;
 import com.iflytek.astron.console.commons.dto.workflow.WorkflowResumeRequest;
 import com.iflytek.astron.console.commons.exception.BusinessException;
 import com.iflytek.astron.console.commons.service.WssListenerService;
+import com.iflytek.astron.console.commons.service.bot.BotDraftPreviewAuthorizationService;
 import com.iflytek.astron.console.commons.service.bot.ChatBotDataService;
 import com.iflytek.astron.console.commons.service.data.ChatDataService;
 import com.iflytek.astron.console.commons.service.data.ChatHistoryService;
@@ -48,6 +49,8 @@ import java.util.List;
 @Slf4j
 public class WorkflowBotChatServiceImpl implements WorkflowBotChatService {
 
+    private static final String DEBUGGER_VERSION = "debugger";
+
     @Autowired
     private UserLangChainDataService userLangChainDataService;
 
@@ -71,6 +74,9 @@ public class WorkflowBotChatServiceImpl implements WorkflowBotChatService {
 
     @Autowired
     private WorkflowVersionLookupService workflowVersionLookupService;
+
+    @Autowired
+    private BotDraftPreviewAuthorizationService botDraftPreviewAuthorizationService;
 
     @Value("${workflow.chatUrl}")
     private String chatUrl;
@@ -116,12 +122,18 @@ public class WorkflowBotChatServiceImpl implements WorkflowBotChatService {
         JSONObject inputs = new JSONObject();
         inputs.put("AGENT_USER_INPUT", ask);
 
+        boolean draftPreview = isDraftPreview(workflowVersion);
+        if (draftPreview) {
+            checkDraftPreviewPermission(botId);
+        }
         UserLangChainInfo userLangChainInfo = userLangChainDataService.findOneByBotId(botId);
         if (userLangChainInfo == null) {
             throw new BusinessException(ResponseEnum.BOT_CHAIN_SUBMIT_ERROR);
         }
         String flowId = userLangChainInfo.getFlowId();
-        String effectiveWorkflowVersion = resolveWorkflowVersion(botId, flowId, workflowVersion);
+        String effectiveWorkflowVersion = draftPreview
+                ? null
+                : resolveWorkflowVersion(botId, flowId, workflowVersion);
         // Record current question
         ChatReqRecords chatReqRecords = new ChatReqRecords();
         chatReqRecords.setChatId(chatId);
@@ -157,7 +169,7 @@ public class WorkflowBotChatServiceImpl implements WorkflowBotChatService {
         String apiUsedUrl;
         // If not submitted for publishing, use debug interface, otherwise use chat interface
         boolean isDebug = false;
-        if (market == null || ShelfStatusEnum.isOffShelf(market.getBotStatus())) {
+        if (draftPreview || market == null || ShelfStatusEnum.isOffShelf(market.getBotStatus())) {
             apiUsedUrl = debugUrl;
             isDebug = true;
         } else {
@@ -190,6 +202,14 @@ public class WorkflowBotChatServiceImpl implements WorkflowBotChatService {
         WorkflowClient client = new WorkflowClient(apiUsedUrl, appId, appKey, appSecret, body);
         WorkflowListener listener = new WorkflowListener(client, chatReqRecords, sseId, wssListenerService, isDebug, sseEmitter);
         client.createWebSocketConnect(listener);
+    }
+
+    private boolean isDraftPreview(String workflowVersion) {
+        return DEBUGGER_VERSION.equalsIgnoreCase(StrUtil.trim(workflowVersion));
+    }
+
+    private void checkDraftPreviewPermission(Integer botId) {
+        botDraftPreviewAuthorizationService.checkBot(botId);
     }
 
     private String resolveWorkflowVersion(Integer botId, String flowId, String workflowVersion) {

@@ -255,6 +255,8 @@ class OutputNodeFrameData(BaseModel):
     content: str = ""
     # Model reasoning content
     reasoning_content: str = ""
+    # Structured Pi Agent lifecycle event
+    agent_event: Optional[Dict[str, Any]] = None
     # Data type
     data_type: str = "text"
     # Whether this is the end frame
@@ -462,6 +464,7 @@ class BaseOutputNode(BaseNode):
                         alias_name=self.alias_name,
                         message=output_node_frame_data.content,
                         reasoning_content=output_node_frame_data.reasoning_content,
+                        agent_event=output_node_frame_data.agent_event,
                     )
         return None
 
@@ -834,6 +837,21 @@ class BaseOutputNode(BaseNode):
                     is_end=(status == SparkLLMStatus.END.value),
                 )
 
+    @staticmethod
+    def _stream_frame_is_complete(
+        status: int,
+        template_type: TemplateType,
+        reasoning_content: str,
+        is_reasoning: bool,
+        content: str,
+    ) -> bool:
+        return status == SparkLLMStatus.END.value or (
+            template_type == TemplateType.REASONING
+            and reasoning_content == ""
+            and is_reasoning
+            and bool(content)
+        )
+
     async def _process_queue_output(
         self,
         dep_node_id: str,
@@ -864,12 +882,8 @@ class BaseOutputNode(BaseNode):
         :return: AsyncIterator yielding OutputNodeFrameData
         """
         queue = variable_pool.stream_data[self.node_id][dep_node_id]
-        while True:
+        while not llm_output_status[dep_node_id]:
             try:
-                # If the LLM node has already finished output, break directly
-                # Scenario: User limited output token count, reasoning ended early, avoid waiting for content
-                if llm_output_status[dep_node_id]:
-                    break
                 msg: StreamOutputMsg = await asyncio.wait_for(
                     queue.get(), timeout=QueueTimeout.AsyncQT.value
                 )
@@ -882,12 +896,6 @@ class BaseOutputNode(BaseNode):
                 code = frame.code
                 status = int(frame.status)
                 text = frame.text
-
-                llm_output_status[dep_node_id] = (
-                    True
-                    if status == SparkLLMStatus.END.value
-                    else llm_output_status[dep_node_id]
-                )
 
                 content = text.get("content", "")
                 reasoning_content = text.get("reasoning_content", "")
@@ -907,6 +915,18 @@ class BaseOutputNode(BaseNode):
                             exception_occurred=True,
                         )
                     break
+
+                agent_event = text.get("agent_event")
+                if agent_event is not None:
+                    yield OutputNodeFrameData(agent_event=agent_event)
+                    if not content and not reasoning_content:
+                        continue
+
+                llm_output_status[dep_node_id] = (
+                    True
+                    if status == SparkLLMStatus.END.value
+                    else llm_output_status[dep_node_id]
+                )
                 async for data in self._yield_output(
                     dep_node_id,
                     status,
@@ -918,11 +938,12 @@ class BaseOutputNode(BaseNode):
                     is_reasoning,
                 ):
                     yield data
-                if status == SparkLLMStatus.END.value or (
-                    template_type == TemplateType.REASONING
-                    and reasoning_content == ""
-                    and is_reasoning
-                    and content
+                if self._stream_frame_is_complete(
+                    status,
+                    template_type,
+                    reasoning_content,
+                    is_reasoning,
+                    content,
                 ):
                     break
             except asyncio.TimeoutError:

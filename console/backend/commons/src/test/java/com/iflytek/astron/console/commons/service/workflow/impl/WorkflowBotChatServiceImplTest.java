@@ -16,6 +16,7 @@ import com.iflytek.astron.console.commons.dto.workflow.WorkflowEventData;
 import com.iflytek.astron.console.commons.enums.ShelfStatusEnum;
 import com.iflytek.astron.console.commons.exception.BusinessException;
 import com.iflytek.astron.console.commons.service.WssListenerService;
+import com.iflytek.astron.console.commons.service.bot.BotDraftPreviewAuthorizationService;
 import com.iflytek.astron.console.commons.service.bot.ChatBotDataService;
 import com.iflytek.astron.console.commons.service.data.ChatDataService;
 import com.iflytek.astron.console.commons.service.data.ChatHistoryService;
@@ -74,6 +75,9 @@ class WorkflowBotChatServiceImplTest {
 
     @Mock
     private WorkflowVersionLookupService workflowVersionLookupService;
+
+    @Mock
+    private BotDraftPreviewAuthorizationService botDraftPreviewAuthorizationService;
 
     @Mock
     private SseEmitter sseEmitter;
@@ -256,6 +260,64 @@ class WorkflowBotChatServiceImplTest {
             Buffer buffer = new Buffer();
             requestBody.writeTo(buffer);
             assertEquals("v1.0", JSON.parseObject(buffer.readUtf8()).getString("version"));
+        }
+    }
+
+    @Test
+    void chatWorkflowBotShouldExecuteDebuggerDraftWithoutPublishedVersion() throws Exception {
+        when(userLangChainDataService.findOneByBotId(456)).thenReturn(userLangChainInfo);
+        when(chatDataService.createRequest(any(ChatReqRecords.class))).thenReturn(chatReqRecords);
+        when(workflowBotParamService.handleMultiFileParam(
+                anyString(), anyLong(), isNull(), any(), any(), anyLong())).thenReturn(false);
+
+        List<ChatReqModelDto> reqList = new ArrayList<>();
+        when(chatDataService.getReqModelBotHistoryByChatId("testUser", 123L)).thenReturn(reqList);
+        ChatRequestDtoList history = new ChatRequestDtoList();
+        history.setMessages(new LinkedList<>());
+        when(chatHistoryService.getHistory("testUser", 123L, reqList)).thenReturn(history);
+
+        ChatBotMarket market = new ChatBotMarket();
+        market.setBotStatus(ShelfStatusEnum.ON_SHELF.getCode());
+        when(chatBotDataService.findMarketBotByBotId(456)).thenReturn(market);
+
+        List<List<?>> constructorArgs = new ArrayList<>();
+        try (MockedConstruction<WorkflowClient> clients = mockConstruction(
+                WorkflowClient.class,
+                (mock, context) -> constructorArgs.add(context.arguments()))) {
+            workflowBotChatService.chatWorkflowBot(
+                    chatBotReqDto, sseEmitter, sseId, workflowOperation, "debugger");
+
+            assertEquals(1, clients.constructed().size());
+            assertEquals("http://test-debug.com", constructorArgs.get(0).get(0));
+            RequestBody body = (RequestBody) constructorArgs.get(0).get(4);
+            Buffer buffer = new Buffer();
+            body.writeTo(buffer);
+            assertNull(JSON.parseObject(buffer.readUtf8()).getString("version"));
+            verify(botDraftPreviewAuthorizationService).checkBot(456);
+            verifyNoInteractions(workflowVersionLookupService);
+        }
+    }
+
+    @Test
+    void chatWorkflowBotShouldRejectUnauthorizedDebuggerBeforeWorkflowLookup() {
+        doThrow(new BusinessException(ResponseEnum.INSUFFICIENT_PERMISSIONS))
+                .when(botDraftPreviewAuthorizationService)
+                .checkBot(456);
+
+        try (MockedConstruction<WorkflowClient> clients = mockConstruction(WorkflowClient.class)) {
+            BusinessException exception = assertThrows(
+                    BusinessException.class,
+                    () -> workflowBotChatService.chatWorkflowBot(
+                            chatBotReqDto,
+                            sseEmitter,
+                            sseId,
+                            workflowOperation,
+                            "debugger"));
+
+            assertEquals(ResponseEnum.INSUFFICIENT_PERMISSIONS, exception.getResponseEnum());
+            verify(botDraftPreviewAuthorizationService).checkBot(456);
+            verifyNoInteractions(userLangChainDataService, chatDataService);
+            assertTrue(clients.constructed().isEmpty());
         }
     }
 

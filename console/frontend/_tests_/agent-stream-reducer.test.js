@@ -1,0 +1,390 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  createAgentStreamState,
+  finalizePendingSegments,
+  parseAgentEvent,
+  parseAgentStreamState,
+  reduceAgentEvent,
+  selectHasPartialContent,
+  selectLiveContent,
+  selectReasoningTimeline,
+} from '../src/components/agent-stream/reducer.ts';
+
+const segmentStart = seq => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'segment_start',
+  turnId: 'turn-1',
+  segmentId: 'turn-1-text-0',
+  source: 'text',
+  channel: 'pending',
+  visibility: 'user',
+});
+
+const executionStarted = seq => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'execution_start',
+  startedAt: 100,
+});
+
+const usageUpdated = seq => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'usage_update',
+  inputTokens: 4,
+  outputTokens: 6,
+  totalTokens: 10,
+});
+
+const executionFinished = (seq, status = 'success') => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'execution_end',
+  status,
+  finishedAt: 150,
+  durationMs: 50,
+});
+
+const segmentDelta = (seq, delta = 'Checking') => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'segment_delta',
+  turnId: 'turn-1',
+  segmentId: 'turn-1-text-0',
+  delta,
+});
+
+const reasoningCommit = seq => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'turn_commit',
+  turnId: 'turn-1',
+  channel: 'reasoning',
+  partial: false,
+  reason: 'tool_call',
+});
+
+const toolStarted = seq => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'tool_start',
+  turnId: 'turn-1',
+  callId: 'call-1',
+  name: 'status',
+  arguments: { id: '7' },
+  status: 'running',
+  startedAt: 1,
+});
+
+const toolFinished = seq => ({
+  version: 1,
+  runId: 'run-1',
+  seq,
+  type: 'tool_finish',
+  turnId: 'turn-1',
+  callId: 'call-1',
+  name: 'status',
+  response: { ready: true },
+  status: 'success',
+  finishedAt: 2,
+  durationMs: 1,
+});
+
+test('pending answer becomes reasoning without duplicate text', () => {
+  let state = createAgentStreamState();
+  state = reduceAgentEvent(state, segmentStart(1));
+  state = reduceAgentEvent(state, segmentDelta(2));
+  assert.equal(selectLiveContent(state), 'Checking');
+
+  state = reduceAgentEvent(state, reasoningCommit(3));
+
+  assert.equal(selectLiveContent(state), '');
+  const timeline = selectReasoningTimeline(state);
+  assert.equal(timeline.length, 1);
+  assert.equal(timeline[0]?.kind, 'reasoning');
+  assert.equal(
+    timeline[0]?.kind === 'reasoning' ? timeline[0].text : '',
+    'Checking'
+  );
+});
+
+test('duplicate seq and repeated tool finish are idempotent', () => {
+  const once = reduceAgentEvent(createAgentStreamState(), toolStarted(1));
+  const twice = reduceAgentEvent(once, toolStarted(1));
+  assert.equal(twice, once);
+
+  const finished = reduceAgentEvent(twice, toolFinished(2));
+  const repeated = reduceAgentEvent(finished, toolFinished(3));
+  assert.equal(Object.keys(repeated.tools).length, 1);
+  assert.equal(Object.values(repeated.tools)[0]?.status, 'success');
+});
+
+test('reasoning segments and tools retain chronological order', () => {
+  let state = createAgentStreamState();
+  state = reduceAgentEvent(state, segmentStart(1));
+  state = reduceAgentEvent(state, segmentDelta(2));
+  state = reduceAgentEvent(state, reasoningCommit(3));
+  state = reduceAgentEvent(state, toolStarted(4));
+  state = reduceAgentEvent(state, toolFinished(5));
+
+  assert.deepEqual(
+    selectReasoningTimeline(state).map(item => item.kind),
+    ['reasoning', 'tool']
+  );
+});
+
+test('transport finalization preserves partial text and classifies by tool use', () => {
+  let answerState = createAgentStreamState();
+  answerState = reduceAgentEvent(answerState, segmentStart(1));
+  answerState = reduceAgentEvent(
+    answerState,
+    segmentDelta(2, 'Partial answer')
+  );
+  answerState = finalizePendingSegments(answerState, 'transport_closed');
+  assert.equal(selectLiveContent(answerState), 'Partial answer');
+  assert.equal(selectHasPartialContent(answerState), true);
+  assert.equal(Object.values(answerState.segments)[0]?.partial, true);
+  assert.equal(answerState.interrupted, true);
+
+  let reasoningState = createAgentStreamState();
+  reasoningState = reduceAgentEvent(reasoningState, segmentStart(1));
+  reasoningState = reduceAgentEvent(
+    reasoningState,
+    segmentDelta(2, 'Checking')
+  );
+  reasoningState = reduceAgentEvent(reasoningState, toolStarted(3));
+  reasoningState = finalizePendingSegments(reasoningState, 'cancelled');
+  assert.equal(selectLiveContent(reasoningState), '');
+  assert.equal(selectHasPartialContent(reasoningState), false);
+  assert.equal(Object.values(reasoningState.tools)[0]?.status, 'cancelled');
+  const item = selectReasoningTimeline(reasoningState)[0];
+  assert.equal(item?.kind, 'reasoning');
+  assert.equal(item?.kind === 'reasoning' ? item.text : '', 'Checking');
+});
+
+test('parser accepts valid events and rejects unknown or malformed versions', () => {
+  assert.deepEqual(parseAgentEvent(segmentStart(1)), segmentStart(1));
+  assert.equal(parseAgentEvent({ version: 2, type: 'segment_delta' }), null);
+  assert.equal(
+    parseAgentEvent({
+      version: 1,
+      runId: 'run-1',
+      seq: 1.5,
+      type: 'segment_delta',
+      turnId: 'turn-1',
+      segmentId: 'segment-1',
+      delta: 'x',
+    }),
+    null
+  );
+  assert.equal(
+    parseAgentEvent({
+      version: 1,
+      runId: 'run-1',
+      seq: 1,
+      type: 'tool_start',
+      turnId: 'turn-1',
+      callId: '',
+      name: 'lookup',
+      arguments: {},
+    }),
+    null
+  );
+});
+
+test('parser accepts lifecycle events without turnId', () => {
+  assert.deepEqual(parseAgentEvent(executionStarted(1)), executionStarted(1));
+  assert.deepEqual(parseAgentEvent(usageUpdated(2)), usageUpdated(2));
+  assert.deepEqual(parseAgentEvent(executionFinished(3)), executionFinished(3));
+});
+
+test('public parser rejects non-user segment visibility', () => {
+  assert.equal(
+    parseAgentEvent({ ...segmentStart(1), visibility: 'runtime' }),
+    null
+  );
+  assert.equal(
+    parseAgentEvent({ ...segmentStart(1), visibility: 'debug' }),
+    null
+  );
+});
+
+test('missing v1 visibility is normalized to user during rolling deploy', () => {
+  const legacy = { ...segmentStart(1) };
+  delete legacy.visibility;
+  assert.deepEqual(parseAgentEvent(legacy), segmentStart(1));
+});
+
+test('execution lifecycle and usage reduce into one execution record', () => {
+  let state = createAgentStreamState();
+  state = reduceAgentEvent(state, executionStarted(1));
+  state = reduceAgentEvent(state, usageUpdated(2));
+  state = reduceAgentEvent(state, {
+    version: 1,
+    runId: 'run-1',
+    seq: 3,
+    type: 'execution_error',
+    code: 'PI_RUNTIME_ERROR',
+    message: 'Pi agent runtime failed',
+    occurredAt: 140,
+  });
+  state = reduceAgentEvent(state, executionFinished(4, 'error'));
+
+  assert.deepEqual(state.executions['run-1'], {
+    runId: 'run-1',
+    status: 'error',
+    startedAt: 100,
+    finishedAt: 150,
+    durationMs: 50,
+    usage: { inputTokens: 4, outputTokens: 6, totalTokens: 10 },
+    error: {
+      code: 'PI_RUNTIME_ERROR',
+      message: 'Pi agent runtime failed',
+      occurredAt: 140,
+    },
+  });
+});
+
+test('persisted schema version 2 migrates to version 3', () => {
+  let current = createAgentStreamState();
+  current = reduceAgentEvent(current, segmentStart(1));
+  const version2 = {
+    ...current,
+    schemaVersion: 2,
+  };
+  delete version2.executions;
+  for (const segment of Object.values(version2.segments)) {
+    delete segment.visibility;
+  }
+
+  const migrated = parseAgentStreamState(version2);
+  assert.equal(migrated?.schemaVersion, 3);
+  assert.deepEqual(migrated?.executions, {});
+  assert.equal(Object.values(migrated?.segments ?? {})[0]?.visibility, 'user');
+});
+
+test('state remains JSON serializable after every event type', () => {
+  let state = createAgentStreamState();
+  const events = [
+    segmentStart(1),
+    segmentDelta(2),
+    {
+      version: 1,
+      runId: 'run-1',
+      seq: 3,
+      type: 'segment_end',
+      turnId: 'turn-1',
+      segmentId: 'turn-1-text-0',
+    },
+    reasoningCommit(4),
+    toolStarted(5),
+    {
+      version: 1,
+      runId: 'run-1',
+      seq: 6,
+      type: 'tool_progress',
+      turnId: 'turn-1',
+      callId: 'call-1',
+      summary: 'waiting',
+    },
+    toolFinished(7),
+  ];
+
+  for (const event of events) state = reduceAgentEvent(state, event);
+
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), state);
+  assert.deepEqual(
+    parseAgentStreamState(JSON.parse(JSON.stringify(state))),
+    state
+  );
+  assert.equal(
+    parseAgentStreamState({ hasStructuredEvents: true, segments: 'broken' }),
+    null
+  );
+  assert.equal(
+    parseAgentStreamState({
+      ...state,
+      segments: { broken: null },
+    }),
+    null
+  );
+});
+
+test('different Pi executions keep identical runtime identifiers isolated', () => {
+  let state = createAgentStreamState();
+  state = reduceAgentEvent(state, segmentStart(1));
+  state = reduceAgentEvent(state, segmentDelta(2, 'first'));
+  state = reduceAgentEvent(state, {
+    ...segmentStart(1),
+    runId: 'run-2',
+  });
+  state = reduceAgentEvent(state, {
+    ...segmentDelta(2, 'second'),
+    runId: 'run-2',
+  });
+
+  assert.equal(Object.keys(state.segments).length, 2);
+  assert.deepEqual(
+    Object.values(state.segments).map(segment => segment.text),
+    ['first', 'second']
+  );
+  assert.equal(selectLiveContent(state), 'firstsecond');
+});
+
+test('timeline order follows global arrival order across Pi executions', () => {
+  let state = createAgentStreamState();
+  state = reduceAgentEvent(state, segmentStart(50));
+  state = reduceAgentEvent(state, segmentDelta(51, 'first'));
+  state = reduceAgentEvent(state, reasoningCommit(52));
+  state = reduceAgentEvent(state, {
+    ...toolStarted(1),
+    runId: 'run-2',
+  });
+
+  const timeline = selectReasoningTimeline(state);
+  assert.deepEqual(
+    timeline.map(item => item.kind),
+    ['reasoning', 'tool']
+  );
+});
+
+test('token updates preserve unrelated records and large tool responses by reference', () => {
+  const largeResponse = { body: 'x'.repeat(32 * 1024) };
+  let state = createAgentStreamState();
+  state = reduceAgentEvent(state, segmentStart(1));
+  state = reduceAgentEvent(state, toolStarted(2));
+  state = reduceAgentEvent(state, {
+    ...toolFinished(3),
+    response: largeResponse,
+  });
+  state = reduceAgentEvent(state, {
+    ...segmentStart(1),
+    runId: 'run-2',
+  });
+
+  const preservedSegment = Object.values(state.segments).find(
+    segment => segment.runId === 'run-1'
+  );
+  const preservedTool = Object.values(state.tools)[0];
+  state = reduceAgentEvent(state, {
+    ...segmentDelta(2, 'next token'),
+    runId: 'run-2',
+  });
+
+  assert.equal(
+    Object.values(state.segments).find(segment => segment.runId === 'run-1'),
+    preservedSegment
+  );
+  assert.equal(Object.values(state.tools)[0], preservedTool);
+  assert.equal(Object.values(state.tools)[0]?.response, largeResponse);
+});

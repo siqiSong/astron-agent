@@ -4,6 +4,7 @@ from typing import Any, Literal, Optional, Union
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, Field
 
+from agent.api.schemas.agent_event import AgentEventV1
 from agent.service.plugin.base import BasePlugin
 
 
@@ -25,9 +26,14 @@ class CotStep(BaseModel):
 
 class AgentResponse(BaseModel):
     typ: Literal[
-        "reasoning_content", "content", "cot_step", "log", "knowledge_metadata"
+        "reasoning_content",
+        "content",
+        "cot_step",
+        "log",
+        "knowledge_metadata",
+        "agent_event",
     ]
-    content: Union[str, CotStep, list]
+    content: Union[str, CotStep, AgentEventV1, list]
     model: str
     created: int = Field(default_factory=cur_timestamp)
     usage: Optional[CompletionUsage] = Field(default=None)

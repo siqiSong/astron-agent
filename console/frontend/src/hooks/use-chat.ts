@@ -2,10 +2,16 @@ import useChatStore from '@/store/chat-store';
 import { getLanguageCode } from '@/utils/http';
 import { useRef } from 'react';
 import type { Option } from '@/types/chat';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { baseURL } from '@/utils/http';
 import useSpaceStore from '@/store/space-store';
 import { fetchSseWithContext } from '@/utils/sse-request';
+import { parseAgentEvent, selectLiveContent } from '@/components/agent-stream';
+import { shouldIgnoreChatStreamCallback } from './chat-stream-guard';
+import {
+  buildWorkflowChatUrl,
+  resolveWorkflowChatVersion,
+} from './chat-preview-version';
 
 // SSE 数据类型定义
 interface SSEData {
@@ -16,6 +22,7 @@ interface SSEData {
     delta?: {
       content?: string;
       reasoning_content?: string;
+      agent_event?: unknown;
       tool_calls?: Array<{
         deskToolName: string;
       }>;
@@ -44,6 +51,7 @@ const ERROR_TEXT =
   '抱歉,您这个问题我暂时无法回答,我抓紧学习一下,争取下次给您满意的答复。';
 
 const useChat = () => {
+  const { version: routeVersion } = useParams<{ version?: string }>();
   const controllerRef = useRef<AbortController>(new AbortController()); //sse请求控制器
   const sidRef = useRef<string>(''); //sid
   const reqIdRef = useRef<number>(0); //reqId
@@ -60,12 +68,13 @@ const useChat = () => {
   const updateStreamingMessage = useChatStore(
     state => state.updateStreamingMessage
   ); //更新流式消息
+  const applyAgentStreamEvent = useChatStore(
+    state => state.applyAgentStreamEvent
+  );
+  const finalizeAgentStream = useChatStore(state => state.finalizeAgentStream);
   const finishStreamingMessage = useChatStore(
     state => state.finishStreamingMessage
   ); //完成流式消息
-  const clearStreamingMessage = useChatStore(
-    state => state.clearStreamingMessage
-  ); //清除流式消息
   const setCurrentToolName = useChatStore(state => state.setCurrentToolName); //当前调用工具名称
   const setTraceSource = useChatStore(state => state.setTraceSource); //溯源结果
   const setDeepThinkText = useChatStore(state => state.setDeepThinkText); //深度思考
@@ -92,6 +101,7 @@ const useChat = () => {
     let nodeChatContent: string = '';
     let messageContent: string = '';
     let completeFinalResult: string = '';
+    let streamSettled = false;
     const controller = new AbortController();
     controllerRef.current = controller;
     setControllerRef(controllerRef.current);
@@ -146,6 +156,9 @@ const useChat = () => {
         return Promise.resolve();
       },
       onmessage(event: SSEEvent): void {
+        if (shouldIgnoreChatStreamCallback(streamSettled, controller.signal)) {
+          return;
+        }
         const deCodedData: SSEData = JSON.parse(event.data);
         const {
           code,
@@ -177,6 +190,11 @@ const useChat = () => {
           return;
         }
         setIsLoading(false);
+        const agentEvent = parseAgentEvent(choices?.[0]?.delta?.agent_event);
+        if (agentEvent) {
+          applyAgentStreamEvent(agentEvent);
+          updateStreamingMessage(ans);
+        }
         //工具  模型返回溯源结果
         if (
           choices?.[1]?.delta?.tool_calls &&
@@ -213,6 +231,7 @@ const useChat = () => {
           ignore && workflowOperation.push('ignore');
           abort && workflowOperation.push('abort');
           setWorkflowOperation(workflowOperation);
+          if (abort) finalizeAgentStream('cancelled');
         }
         nodeChatContent += content || '';
         //判断是否是选项
@@ -230,6 +249,7 @@ const useChat = () => {
               updateStreamingMessage(ans);
             }
             // 完成流式消息，添加sid和id
+            streamSettled = true;
             finishStreamingMessage(sidRef.current, reqIdRef.current);
             controller.abort('结束');
             return;
@@ -239,19 +259,62 @@ const useChat = () => {
           updateStreamingMessage(ans);
         } else {
           //统一的报错处理
-          updateStreamingMessage(ERROR_TEXT);
-          finishStreamingMessage(sidRef.current, reqIdRef.current);
+          finalizeAgentStream('error');
+          const errorMessage =
+            typeof message === 'string'
+              ? message
+              : typeof error === 'string'
+                ? error
+                : undefined;
+          const current = useChatStore.getState().messageList.at(-1);
+          const partialContent = current?.agentStream?.hasStructuredEvents
+            ? selectLiveContent(current.agentStream)
+            : '';
+          if (ans || !partialContent) {
+            updateStreamingMessage(ans || ERROR_TEXT);
+          }
+          streamSettled = true;
+          finishStreamingMessage(
+            sidRef.current,
+            reqIdRef.current,
+            'error',
+            errorMessage
+          );
           controller.abort('错误结束');
           return;
         }
       },
       onerror(err: Error): void {
-        clearStreamingMessage();
+        if (streamSettled) return;
+        if (controller.signal.aborted) {
+          streamSettled = true;
+          return;
+        }
+        streamSettled = true;
+        finalizeAgentStream('error');
+        finishStreamingMessage(sidRef.current, reqIdRef.current, 'error');
         controllerRef.current.abort('连接错误');
         console.warn('esError', err);
       },
+      onclose(): void {
+        if (streamSettled) return;
+        if (controller.signal.aborted) {
+          streamSettled = true;
+          return;
+        }
+        streamSettled = true;
+        finalizeAgentStream('transport_closed');
+        finishStreamingMessage(sidRef.current, reqIdRef.current, 'error');
+      },
     }).catch((err: Error) => {
-      clearStreamingMessage();
+      if (streamSettled) return;
+      if (controller.signal.aborted) {
+        streamSettled = true;
+        return;
+      }
+      streamSettled = true;
+      finalizeAgentStream('error');
+      finishStreamingMessage(sidRef.current, reqIdRef.current, 'error');
       controllerRef.current.abort('请求失败');
       console.error('fetchError', err);
     });
@@ -272,7 +335,10 @@ const useChat = () => {
     const form = new FormData();
     form.append('text', msg || '');
     form.append('chatId', `${currentChatId}`);
-    form.append('workflowVersion', version || '');
+    form.append(
+      'workflowVersion',
+      resolveWorkflowChatVersion(version, routeVersion)
+    );
     workflowOperation && form.append('workflowOperation', workflowOperation);
     // 执行回调函数
     onSendCallback && onSendCallback();
@@ -295,10 +361,11 @@ const useChat = () => {
   };
 
   const handleFlowToChat = (item: any) => {
-    let url = `${window.location.origin}/chat/${item?.botId}`;
-    if (item?.version) {
-      url += `?version=${item?.version}`;
-    }
+    const url = buildWorkflowChatUrl(
+      window.location.origin,
+      item?.botId,
+      item?.version
+    );
     window.open(url, '_blank');
   };
 

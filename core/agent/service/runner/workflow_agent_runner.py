@@ -5,8 +5,9 @@ from typing import Any, AsyncGenerator, Sequence
 from common.otlp.log_trace.node_log import Data, NodeLog
 from common.otlp.log_trace.node_trace_log import NodeTraceLog
 from common.otlp.trace.span import Span
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from agent.api.schemas.agent_event import AgentEventBase
 from agent.api.schemas.agent_response import AgentResponse, CotStep
 from agent.api.schemas.completion_chunk import (
     ReasonChatCompletionChunk,
@@ -16,19 +17,25 @@ from agent.api.schemas.completion_chunk import (
     ReasonChoiceDeltaToolCallFunction,
 )
 from agent.engine.nodes.chat.chat_runner import ChatRunner
-from agent.engine.nodes.cot.cot_runner import CotRunner
+from agent.engine.nodes.pi.pi_runner import PiRunner
+from agent.exceptions.agent_exc import AgentInternalExc
 from agent.service.plugin.base import BasePlugin
 
 
 class WorkflowAgentRunner(BaseModel):
     """Workflow Agent runner"""
 
-    chat_runner: ChatRunner
-    cot_runner: CotRunner
+    chat_runner: ChatRunner | None = None
+    pi_runner: PiRunner | None = None
 
     plugins: Sequence[BasePlugin]
 
     knowledge_metadata_list: list[Any] = Field(default_factory=list)
+    question: str = ""
+
+    _non_user_segments: set[tuple[str, str, str]] = PrivateAttr(default_factory=set)
+    _non_user_turns: set[tuple[str, str]] = PrivateAttr(default_factory=set)
+    _user_turns: set[tuple[str, str]] = PrivateAttr(default_factory=set)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -57,10 +64,14 @@ class WorkflowAgentRunner(BaseModel):
         self, span: Span, node_trace_log: NodeTraceLog
     ) -> AsyncGenerator[AgentResponse, None]:
         if not self.plugins:
+            if self.chat_runner is None:
+                raise AgentInternalExc("Chat runner is not configured")
             async for message in self.chat_runner.run(span, node_trace_log):
                 yield message
         else:
-            async for message in self.cot_runner.run(span, node_trace_log):
+            if self.pi_runner is None:
+                raise AgentInternalExc("Pi runner is not configured")
+            async for message in self.pi_runner.run(span, node_trace_log):
                 yield message
 
     async def convert_message(
@@ -87,8 +98,60 @@ class WorkflowAgentRunner(BaseModel):
             self._handle_log(chunk, message)
         elif message.typ == "knowledge_metadata":
             self._handle_knowledge_metadata(chunk, message)
+        elif message.typ == "agent_event":
+            self._handle_agent_event(chunk, message)
 
         return chunk
+
+    def _handle_agent_event(
+        self, chunk: ReasonChatCompletionChunk, message: AgentResponse
+    ) -> None:
+        if isinstance(message.content, AgentEventBase):
+            if not self._is_public_agent_event(message.content):
+                return
+            chunk.choices[0].delta.agent_event = message.content.model_dump(
+                exclude_none=True
+            )
+
+    def _is_public_agent_event(self, event: AgentEventBase) -> bool:
+        if event.type == "execution_start":
+            self._non_user_segments.clear()
+            self._non_user_turns.clear()
+            self._user_turns.clear()
+            return True
+
+        if event.type == "segment_start":
+            turn_key = (event.runId, event.turnId)
+            segment_key = (event.runId, event.turnId, event.segmentId)
+            if event.visibility != "user":
+                self._non_user_segments.add(segment_key)
+                self._non_user_turns.add(turn_key)
+                return False
+            self._user_turns.add(turn_key)
+            return True
+
+        if event.type in {"segment_delta", "segment_end"}:
+            return (
+                event.runId,
+                event.turnId,
+                event.segmentId,
+            ) not in self._non_user_segments
+
+        if event.type == "turn_commit":
+            turn_key = (event.runId, event.turnId)
+            hidden_only = (
+                turn_key in self._non_user_turns and turn_key not in self._user_turns
+            )
+            self._non_user_segments = {
+                segment
+                for segment in self._non_user_segments
+                if segment[:2] != turn_key
+            }
+            self._non_user_turns.discard(turn_key)
+            self._user_turns.discard(turn_key)
+            return not hidden_only
+
+        return True
 
     def _handle_reasoning_content(
         self, chunk: ReasonChatCompletionChunk, message: AgentResponse
@@ -225,7 +288,7 @@ class WorkflowAgentRunner(BaseModel):
                 function=ReasonChoiceDeltaToolCallFunction(
                     name="knowledge",
                     arguments=json.dumps(
-                        {"query": getattr(self.chat_runner, "question", "")},
+                        {"query": self.question},
                         ensure_ascii=False,
                     ),
                     response=json.dumps(

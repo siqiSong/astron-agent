@@ -1,5 +1,6 @@
 package com.iflytek.astron.console.hub.service.chat.impl;
 
+import com.iflytek.astron.console.commons.constant.ResponseEnum;
 import com.iflytek.astron.console.commons.dto.llm.SparkChatRequest;
 import com.iflytek.astron.console.commons.entity.bot.ChatBotBase;
 import com.iflytek.astron.console.commons.entity.bot.ChatBotMarket;
@@ -11,6 +12,8 @@ import com.iflytek.astron.console.commons.dto.chat.ChatListCreateResponse;
 import com.iflytek.astron.console.commons.entity.chat.ChatReqRecords;
 import com.iflytek.astron.console.commons.enums.ShelfStatusEnum;
 import com.iflytek.astron.console.commons.enums.bot.BotTypeEnum;
+import com.iflytek.astron.console.commons.exception.BusinessException;
+import com.iflytek.astron.console.commons.service.bot.BotDraftPreviewAuthorizationService;
 import com.iflytek.astron.console.commons.service.bot.BotService;
 import com.iflytek.astron.console.commons.service.bot.ChatBotDataService;
 import com.iflytek.astron.console.commons.service.data.ChatDataService;
@@ -82,7 +85,7 @@ class BotChatServiceImplUnitTest {
     @Mock
     private ReqKnowledgeRecordsDataService reqKnowledgeRecordsDataService;
     @Mock
-    private com.iflytek.astron.console.hub.util.BotPermissionUtil botPermissionUtil;
+    private BotDraftPreviewAuthorizationService botDraftPreviewAuthorizationService;
     @Mock
     private com.iflytek.astron.console.hub.service.bot.PersonalityConfigService personalityConfigService;
     @Mock
@@ -125,6 +128,65 @@ class BotChatServiceImplUnitTest {
 
         verify(workflowBotChatService).chatWorkflowBot(eq(chatBotReqDto), eq(sseEmitter), eq("sse"), eq("op"), eq("v1"));
         verify(springAiAgentChatService, never()).chat(any(), any(), any());
+    }
+
+    @Test
+    void testChatMessageBot_DebuggerWithoutBotPermission_DoesNotSyncOrExecuteWorkflow() {
+        ChatBotReqDto chatBotReqDto = createChatBotReqDto();
+        SseEmitter sseEmitter = new SseEmitter();
+
+        doThrow(new BusinessException(ResponseEnum.INSUFFICIENT_PERMISSIONS))
+                .when(botDraftPreviewAuthorizationService)
+                .checkBot(1);
+
+        botChatService.chatMessageBot(
+                chatBotReqDto, sseEmitter, "sse", "op", "debugger");
+
+        verify(botDraftPreviewAuthorizationService).checkBot(1);
+        verifyNoInteractions(modelService, workflowService, workflowBotChatService);
+    }
+
+    @Test
+    void testChatMessageBot_AuthorizedOnShelfDebugger_SyncsDraftModelConfiguration() {
+        ChatBotReqDto chatBotReqDto = createChatBotReqDto();
+        SseEmitter sseEmitter = new SseEmitter();
+
+        ChatBotMarket published = createChatBotMarket();
+        published.setVersion(BotTypeEnum.WORKFLOW_BOT.getType());
+        published.setModel("published-model");
+        published.setModelId(11L);
+
+        ChatBotBase draft = createChatBotBase();
+        draft.setVersion(BotTypeEnum.WORKFLOW_BOT.getType());
+        draft.setModel("draft-model");
+        draft.setModelId(22L);
+
+        UserLangChainInfo userLangChainInfo = new UserLangChainInfo();
+        userLangChainInfo.setFlowId("test-flow-id");
+        LLMInfoVo publishedModel = createLLMInfoVo();
+        publishedModel.setLlmId(11L);
+        LLMInfoVo draftModel = createLLMInfoVo();
+        draftModel.setLlmId(22L);
+
+        lenient().when(chatBotDataService.findMarketBotByBotId(1)).thenReturn(published);
+        when(chatBotDataService.findById(1)).thenReturn(Optional.of(draft));
+        when(userLangChainDataService.findOneByBotId(1)).thenReturn(userLangChainInfo);
+        lenient().when(modelService.getRuntimeModelDetail(11L, "test-uid", 1L))
+                .thenReturn(publishedModel);
+        when(modelService.getRuntimeModelDetail(22L, "test-uid", 1L))
+                .thenReturn(draftModel);
+        when(workflowService.syncWorkflowModelConfig("test-flow-id", draftModel))
+                .thenReturn(true);
+
+        botChatService.chatMessageBot(
+                chatBotReqDto, sseEmitter, "sse", "op", "debugger");
+
+        verify(botDraftPreviewAuthorizationService).checkBot(1);
+        verify(modelService).getRuntimeModelDetail(22L, "test-uid", 1L);
+        verify(modelService, never()).getRuntimeModelDetail(11L, "test-uid", 1L);
+        verify(workflowService).syncWorkflowModelConfig("test-flow-id", draftModel);
+        verify(workflowBotChatService).chatWorkflowBot(
+                chatBotReqDto, sseEmitter, "sse", "op", "debugger");
     }
 
     @ParameterizedTest
@@ -246,6 +308,45 @@ class BotChatServiceImplUnitTest {
         assertTrue(task.isEdit());
         assertFalse(task.isDebug());
         assertEquals("x1", task.getSparkModelName());
+    }
+
+    @Test
+    void testReAnswerMessageBot_PublishedWorkflow_DoesNotUseStandaloneAgent() {
+        SseEmitter sseEmitter = new SseEmitter();
+        ChatReqRecords chatReqRecords = createChatReqRecords();
+        ChatBotMarket workflow = createChatBotMarket();
+        workflow.setVersion(BotTypeEnum.WORKFLOW_BOT.getType());
+
+        when(chatDataService.findRequestById(1L)).thenReturn(chatReqRecords);
+        when(chatBotDataService.findMarketBotByBotId(1)).thenReturn(workflow);
+
+        try (MockedStatic<SseEmitterUtil> sse = mockStatic(SseEmitterUtil.class)) {
+            botChatService.reAnswerMessageBot(1L, 1, sseEmitter, "sse");
+
+            verifyNoInteractions(springAiAgentChatService, workflowBotChatService);
+            sse.verify(() -> SseEmitterUtil.completeWithError(
+                    sseEmitter, "Re-answer is not supported for workflow or talk bots"));
+        }
+    }
+
+    @Test
+    void testReAnswerMessageBot_DraftTalkBot_DoesNotUseStandaloneAgent() {
+        SseEmitter sseEmitter = new SseEmitter();
+        ChatReqRecords chatReqRecords = createChatReqRecords();
+        ChatBotBase talkBot = createChatBotBase();
+        talkBot.setVersion(BotTypeEnum.TALK.getType());
+
+        when(chatDataService.findRequestById(1L)).thenReturn(chatReqRecords);
+        when(chatBotDataService.findMarketBotByBotId(1)).thenReturn(null);
+        when(chatBotDataService.findById(1)).thenReturn(Optional.of(talkBot));
+
+        try (MockedStatic<SseEmitterUtil> sse = mockStatic(SseEmitterUtil.class)) {
+            botChatService.reAnswerMessageBot(1L, 1, sseEmitter, "sse");
+
+            verifyNoInteractions(springAiAgentChatService, workflowBotChatService);
+            sse.verify(() -> SseEmitterUtil.completeWithError(
+                    sseEmitter, "Re-answer is not supported for workflow or talk bots"));
+        }
     }
 
     @Test

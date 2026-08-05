@@ -1,4 +1,9 @@
 // 聊天相关的类型定义
+import type {
+  AgentEventV1,
+  AgentFinalizeReason,
+  AgentStreamState,
+} from '@/components/agent-stream/types';
 
 // 文件上传支持配置接口
 export interface SupportUploadConfig {
@@ -153,6 +158,12 @@ export interface WorkflowEventData {
 }
 
 // 基础消息接口
+export type ChatStreamStatus =
+  | 'streaming'
+  | 'completed'
+  | 'cancelled'
+  | 'error';
+
 export interface MessageListType {
   id?: number;
   message: string;
@@ -166,6 +177,9 @@ export interface MessageListType {
   tools?: string[];
   updateTime?: string;
   workflowEventData?: WorkflowEventData;
+  agentStream?: AgentStreamState;
+  streamStatus?: ChatStreamStatus;
+  errorMessage?: string;
 }
 
 // 溯源数据
@@ -271,7 +285,14 @@ export interface ChatActions {
   addMessage: (message: MessageListType) => void; //添加消息
   startStreamingMessage: (message: MessageListType) => void; //开始流式消息
   updateStreamingMessage: (content: string) => void; //更新流式消息内容
-  finishStreamingMessage: (sid?: string, reqId?: number) => void; //完成流式消息
+  applyAgentStreamEvent: (event: AgentEventV1) => void; //应用结构化 Agent 流事件
+  finalizeAgentStream: (reason: AgentFinalizeReason) => void; //保留中断时已收到的 Agent 内容
+  finishStreamingMessage: (
+    sid?: string,
+    reqId?: number,
+    status?: Exclude<ChatStreamStatus, 'streaming'>,
+    errorMessage?: string
+  ) => void; //完成流式消息
   clearStreamingMessage: () => void; //清除流式消息
   setStreamId: (streamId: string) => void; //设置对话流id
   setAnswerPercent: (answerPercent: number) => void; //设置回答进度

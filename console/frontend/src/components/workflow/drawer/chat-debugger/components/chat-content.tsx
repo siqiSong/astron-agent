@@ -16,6 +16,12 @@ import { useSearchParams } from 'react-router-dom';
 import { useMemoizedFn } from 'ahooks';
 import { typeList } from '@/constants';
 import FeedbackDialog from '@/components/workflow/modal/feedback-dialog';
+import {
+  AgentTimeline,
+  selectHasPartialContent,
+  selectLiveContent,
+  selectReasoningTimeline,
+} from '@/components/agent-stream';
 
 // 类型导入
 import {
@@ -150,9 +156,21 @@ const MessageReplyContent = ({
   chatList,
   handleResumeChat,
 }): React.ReactElement => {
+  const structured = chat?.agentStream?.hasStructuredEvents === true;
+  const liveContent =
+    structured && !chat?.content
+      ? selectLiveContent(chat.agentStream)
+      : chat?.content || '';
+  const hasPartialContent = structured
+    ? selectHasPartialContent(chat.agentStream)
+    : false;
+
   return (
     <>
-      {(chat?.messageContent || chat?.reasoningContent || chat?.content) && (
+      {(chat?.messageContent ||
+        chat?.reasoningContent ||
+        liveContent ||
+        structured) && (
         <div>
           <div>
             <MarkdownRender
@@ -160,34 +178,47 @@ const MessageReplyContent = ({
               isSending={
                 debuggering &&
                 index === chatList?.length - 1 &&
-                !chat?.reasoningContent
+                !chat?.reasoningContent &&
+                !structured
               }
             />
-            {chat?.reasoningContent && (
-              <div className="deep-seek-think">
-                <MarkdownRender
-                  content={chat?.reasoningContent}
-                  isSending={
-                    debuggering &&
-                    index === chatList?.length - 1 &&
-                    !chat?.content
-                  }
-                />
-              </div>
+            {structured ? (
+              <AgentTimeline
+                state={chat.agentStream}
+                isStreaming={debuggering && index === chatList?.length - 1}
+              />
+            ) : (
+              chat?.reasoningContent && (
+                <div className="deep-seek-think">
+                  <MarkdownRender
+                    content={chat?.reasoningContent}
+                    isSending={
+                      debuggering &&
+                      index === chatList?.length - 1 &&
+                      !chat?.content
+                    }
+                  />
+                </div>
+              )
             )}
-            {isJSON(chat?.content || '') ? (
+            {isJSON(liveContent) ? (
               <div onClick={e => e.stopPropagation()}>
                 <JSONPretty
                   name={false}
-                  src={JSON.parse(chat?.content || '{}')}
+                  src={JSON.parse(liveContent)}
                   theme="rjv-default"
                 />
               </div>
             ) : (
               <MarkdownRender
-                content={chat?.content || ''}
+                content={liveContent}
                 isSending={debuggering && index === chatList?.length - 1}
               />
+            )}
+            {hasPartialContent && (
+              <span className="mt-1 inline-block text-xs text-[#9a6b16]">
+                此段内容因任务中断而提前结束
+              </span>
             )}
             {chat?.option && (
               <div className="flex flex-col items-center gap-2 my-2">
@@ -590,6 +621,10 @@ const MessageReply = ({
   setChatList,
   chatType,
 }): React.ReactElement => {
+  const hasStructuredReasoning =
+    chat?.agentStream?.hasStructuredEvents === true &&
+    selectReasoningTimeline(chat.agentStream).length > 0;
+
   return (
     <div className="flex flex-col gap-4 group" key={chat?.id}>
       <div className="flex items-start gap-4">
@@ -600,7 +635,7 @@ const MessageReply = ({
           }}
         ></div>
         <div>
-          {chat?.reasoningContent && (
+          {(chat?.reasoningContent || hasStructuredReasoning) && (
             <div className="inline-flex items-center rounded-md px-[14px] py-[7px] bg-[#f5f5f5] hover:bg-[#ededed] mb-2 gap-2">
               <svg
                 width="15"
@@ -637,7 +672,8 @@ const MessageReply = ({
               debuggering &&
               !chat?.messageContent &&
               !chat?.reasoningContent &&
-              !chat?.content && (
+              !chat?.content &&
+              !chat?.agentStream?.hasStructuredEvents && (
                 <div className="flex items-center gap-2.5">
                   <span>{t('workflow.nodes.chatDebugger.generating')}</span>
                   <img
