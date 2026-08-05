@@ -14,6 +14,7 @@ import useChatStore from '@/store/chat-store';
 import { isPureText } from '@/utils';
 import { SDKEvents } from '@/utils/avatar-sdk-web_3.1.2.1002/index.js';
 import { message as AntdMessage } from 'antd';
+import { supportsReAnswer } from '../re-answer-policy';
 
 /**
  * 每个回复内容下面的按钮
@@ -140,7 +141,7 @@ const ResqBottomButtons = ({
         placement="top"
         overlayClassName="black-tooltip"
       >
-        {isLastMessage && (
+        {isLastMessage && supportsReAnswer(botInfo.version) && (
           <div
             onClick={() => handleReAnswer({ requestId: message.reqId || 0 })}
             className="text-sm cursor-pointer mr-3 chat-copy-icon"

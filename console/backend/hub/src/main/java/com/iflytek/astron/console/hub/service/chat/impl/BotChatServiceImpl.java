@@ -201,6 +201,11 @@ public class BotChatServiceImpl implements BotChatService {
 
             ChatReqRecords chatReqRecords = chatDataService.findRequestById(requestId);
             BotConfiguration botConfig = getBotConfiguration(botId);
+            if (isWorkflowRuntime(botConfig.version)) {
+                SseEmitterUtil.completeWithError(
+                        sseEmitter, "Re-answer is not supported for workflow or talk bots");
+                return;
+            }
             ChatBotReqDto chatBotReqDto = new ChatBotReqDto();
             chatBotReqDto.setBotId(botId);
             chatBotReqDto.setChatId(chatReqRecords.getChatId());
@@ -480,6 +485,11 @@ public class BotChatServiceImpl implements BotChatService {
 
     private boolean isDraftPreview(String workflowVersion) {
         return DEBUGGER_VERSION.equalsIgnoreCase(StrUtil.trim(workflowVersion));
+    }
+
+    private boolean isWorkflowRuntime(Integer botVersion) {
+        return Objects.equals(botVersion, BotTypeEnum.WORKFLOW_BOT.getType())
+                || Objects.equals(botVersion, BotTypeEnum.TALK.getType());
     }
 
     private String resolveBaseMcpServerUrls(Integer botId) {

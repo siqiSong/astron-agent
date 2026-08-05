@@ -311,6 +311,45 @@ class BotChatServiceImplUnitTest {
     }
 
     @Test
+    void testReAnswerMessageBot_PublishedWorkflow_DoesNotUseStandaloneAgent() {
+        SseEmitter sseEmitter = new SseEmitter();
+        ChatReqRecords chatReqRecords = createChatReqRecords();
+        ChatBotMarket workflow = createChatBotMarket();
+        workflow.setVersion(BotTypeEnum.WORKFLOW_BOT.getType());
+
+        when(chatDataService.findRequestById(1L)).thenReturn(chatReqRecords);
+        when(chatBotDataService.findMarketBotByBotId(1)).thenReturn(workflow);
+
+        try (MockedStatic<SseEmitterUtil> sse = mockStatic(SseEmitterUtil.class)) {
+            botChatService.reAnswerMessageBot(1L, 1, sseEmitter, "sse");
+
+            verifyNoInteractions(springAiAgentChatService, workflowBotChatService);
+            sse.verify(() -> SseEmitterUtil.completeWithError(
+                    sseEmitter, "Re-answer is not supported for workflow or talk bots"));
+        }
+    }
+
+    @Test
+    void testReAnswerMessageBot_DraftTalkBot_DoesNotUseStandaloneAgent() {
+        SseEmitter sseEmitter = new SseEmitter();
+        ChatReqRecords chatReqRecords = createChatReqRecords();
+        ChatBotBase talkBot = createChatBotBase();
+        talkBot.setVersion(BotTypeEnum.TALK.getType());
+
+        when(chatDataService.findRequestById(1L)).thenReturn(chatReqRecords);
+        when(chatBotDataService.findMarketBotByBotId(1)).thenReturn(null);
+        when(chatBotDataService.findById(1)).thenReturn(Optional.of(talkBot));
+
+        try (MockedStatic<SseEmitterUtil> sse = mockStatic(SseEmitterUtil.class)) {
+            botChatService.reAnswerMessageBot(1L, 1, sseEmitter, "sse");
+
+            verifyNoInteractions(springAiAgentChatService, workflowBotChatService);
+            sse.verify(() -> SseEmitterUtil.completeWithError(
+                    sseEmitter, "Re-answer is not supported for workflow or talk bots"));
+        }
+    }
+
+    @Test
     void testDebugChatMessageBot_NullModelId_BuildsDebugSparkTask() {
         DebugChatBotReqDto request = new DebugChatBotReqDto();
         request.setText("test message");

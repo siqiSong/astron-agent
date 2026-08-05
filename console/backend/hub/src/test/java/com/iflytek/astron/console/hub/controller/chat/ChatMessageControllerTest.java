@@ -99,6 +99,29 @@ class ChatMessageControllerTest {
     }
 
     @Test
+    void reAnswerRejectsUnauthorizedConversationBeforeInvokingBotService() {
+        SseEmitter emitter = mock(SseEmitter.class);
+        ChatTreeIndex index = ChatTreeIndex.builder().childChatId(2L).build();
+        when(chatListDataService.findChatTreeIndexByChatIdOrderById(1L))
+                .thenReturn(List.of(index));
+        when(chatListDataService.findByUidAndChatId("intruder", 2L)).thenReturn(null);
+
+        try (MockedStatic<RequestContextUtil> requestContext = mockStatic(RequestContextUtil.class);
+                MockedStatic<SseEmitterUtil> sse = mockStatic(SseEmitterUtil.class)) {
+            requestContext.when(RequestContextUtil::getUID).thenReturn("intruder");
+            sse.when(SseEmitterUtil::createSseEmitter).thenReturn(emitter);
+
+            SseEmitter result = controller.reAnswer(1L, 11L);
+
+            assertSame(emitter, result);
+            verifyNoInteractions(botChatService);
+            sse.verify(() -> SseEmitterUtil.sendError(
+                    emitter, "Current conversation window is unavailable"));
+            sse.verify(() -> SseEmitterUtil.sendEndAndComplete(emitter));
+        }
+    }
+
+    @Test
     void botDebugRejectsSpaceHeaderFromNonMemberBeforeUsingSpaceResources() {
         BotDebugRequest debugRequest = new BotDebugRequest();
         debugRequest.setText("hello");
