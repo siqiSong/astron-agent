@@ -37,7 +37,11 @@ from plugin.link.service.community.tools.mcp.mcp_transport import (
     initialized_mcp_session,
 )
 from plugin.link.utils.errors.code import ErrCode
-from plugin.link.utils.security.access_interceptor import is_in_blacklist, is_local_url
+from plugin.link.utils.security.access_interceptor import (
+    is_in_blacklist,
+    is_local_url,
+    is_trusted_internal_mcp_url,
+)
 from plugin.link.utils.sid.sid_generator2 import new_sid
 
 
@@ -56,7 +60,7 @@ async def _process_mcp_server_by_id(
             tools=[],
         )
 
-    if is_local_url(url):
+    if is_local_url(url) and not is_trusted_internal_mcp_url(url):
         err = ErrCode.MCP_SERVER_LOCAL_URL_ERR
         return MCPItemInfo(
             server_id=mcp_server_id,
@@ -74,7 +78,7 @@ async def _process_mcp_server_by_url(
     url: str, transport: MCPTransport = MCPTransport.AUTO
 ) -> MCPItemInfo:
     """Process a single MCP server by URL and return its tools."""
-    if is_local_url(url):
+    if is_local_url(url) and not is_trusted_internal_mcp_url(url):
         err = ErrCode.MCP_SERVER_LOCAL_URL_ERR
         return MCPItemInfo(
             server_url=str(url),
@@ -372,7 +376,7 @@ def _validate_and_get_url(
             return err, ""
 
     # Check local URL
-    if is_local_url(url):
+    if is_local_url(url) and not is_trusted_internal_mcp_url(url):
         err = ErrCode.MCP_SERVER_LOCAL_URL_ERR
         if os.getenv(const.OTLP_ENABLE_KEY, "0").lower() == "1":
             m.in_error_count(err.code)

@@ -235,8 +235,16 @@ const ChatPage = (): ReactElement => {
     // Clear the streaming/loading state immediately so the spinner stops even if the SSE `end`
     // event never arrives after stopping (the connection may close before it is delivered).
     const chatStore = useChatStore.getState();
+    const streamingMessageId = chatStore.messageList.at(-1)?.id;
     chatStore.finalizeAgentStream('cancelled');
-    chatStore.finishStreamingMessage(undefined, undefined, 'cancelled');
+    if (streamingMessageId !== undefined) {
+      chatStore.finishStreamingMessage(
+        streamingMessageId,
+        undefined,
+        undefined,
+        'cancelled'
+      );
+    }
     chatStore.controllerRef.abort('用户停止');
     postStopChat(streamId).catch(err => {
       console.error(err);

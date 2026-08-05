@@ -8,6 +8,7 @@ import com.iflytek.astron.console.toolkit.util.ssrf.SsrfValidators;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -48,6 +49,9 @@ import java.util.regex.Pattern;
 public class UrlCheckTool {
 
     private final ConfigInfoMapper configInfoMapper;
+
+    @Value("${TOOL_INTERNAL_ALLOWLIST:}")
+    private String internalAllowlist;
 
     // ===== Configuration category constants =====
     private static final String IP_CATEGORY = "IP_BLACK_LIST";
@@ -426,6 +430,13 @@ public class UrlCheckTool {
             // Unified decoding (%xx) - Note: only once to avoid double decoding
             String decoded = URLDecoder.decode(url, StandardCharsets.UTF_8);
 
+            // Built-in tools are addressed through Docker DNS. Trust only an exact configured
+            // authority and the dedicated API prefix; all other private destinations still pass
+            // through the normal SSRF policy below.
+            if (isTrustedInternalToolUrl(decoded)) {
+                return;
+            }
+
             // 1) Protocol
             checkHttpOrHttps(decoded);
 
@@ -453,6 +464,26 @@ public class UrlCheckTool {
     }
 
     // ========================= Private helpers =========================
+
+    private boolean isTrustedInternalToolUrl(String url) {
+        if (StringUtils.isBlank(internalAllowlist)) {
+            return false;
+        }
+        try {
+            URI uri = new URI(url);
+            if (!"http".equalsIgnoreCase(uri.getScheme()) || StringUtils.isNotBlank(uri.getUserInfo())
+                    || StringUtils.isBlank(uri.getHost())) {
+                return false;
+            }
+            String authority = uri.getHost() + (uri.getPort() < 0 ? "" : ":" + uri.getPort());
+            boolean allowed = Arrays.stream(internalAllowlist.split(","))
+                    .map(String::trim)
+                    .anyMatch(authority::equalsIgnoreCase);
+            return allowed && uri.getPath() != null && uri.getPath().startsWith("/aitools/v1/");
+        } catch (URISyntaxException e) {
+            return false;
+        }
+    }
 
     /**
      * Reads CSV configuration from config table by category and converts to deduplicated String list.

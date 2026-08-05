@@ -290,6 +290,7 @@ services:
       REDIS_PASSWORD: "${REDIS_PASSWORD}"
       OTLP_ENDPOINT: "${OTLP_ENDPOINT:-127.0.0.1:4317}"
       OTLP_ENABLE: "${OTLP_ENABLE:-0}"
+      MCP_INTERNAL_ALLOWLIST: "${MCP_INTERNAL_ALLOWLIST:-core-aitools:18669}"
       KAFKA_ENABLE: "${KAFKA_ENABLE:-0}"
       KAFKA_SERVERS: "${KAFKA_SERVERS:-kafka:29092}"
     depends_on:
@@ -357,6 +358,17 @@ services:
       MYSQL_PASSWORD: "${MYSQL_PASSWORD:-root123}"
       CONSOLE_MYSQL_DB: "${CONSOLE_MYSQL_DB:-astron_console}"
       MYSQL_URL: "${MYSQL_URL:-jdbc:mysql://mysql:3306/astron_console?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8&createDatabaseIfNotExist=true}"
+      TABLETOOLS_PORT: "${TABLETOOLS_PORT:-18669}"
+      CONSOLE_DOMAIN: "${CONSOLE_DOMAIN:-http://localhost}"
+      TABLETOOLS_PUBLIC_BASE_URL: "${TABLETOOLS_PUBLIC_BASE_URL:-}"
+      TABLETOOLS_ARTIFACT_DIR: "/opt/core/tabletools-data"
+      TABLETOOLS_ARTIFACT_TTL: "${TABLETOOLS_ARTIFACT_TTL:-24h}"
+      TABLETOOLS_MAX_DOWNLOAD_BYTES: "${TABLETOOLS_MAX_DOWNLOAD_BYTES:-52428800}"
+      TABLETOOLS_MAX_EXPANDED_BYTES: "${TABLETOOLS_MAX_EXPANDED_BYTES:-268435456}"
+      TABLETOOLS_MAX_ROWS: "${TABLETOOLS_MAX_ROWS:-100000}"
+      TABLETOOLS_MAX_COLUMNS: "${TABLETOOLS_MAX_COLUMNS:-1024}"
+      TABLETOOLS_MAX_CHART_POINTS: "${TABLETOOLS_MAX_CHART_POINTS:-10000}"
+      TABLETOOLS_ALLOWED_DOWNLOAD_HOSTS: "${TABLETOOLS_ALLOWED_DOWNLOAD_HOSTS:-minio}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -369,6 +381,16 @@ services:
     volumes:
       - ./config/aitools/config.env:/opt/core/plugin/aitools/config.env
       - ./config/aitools/logs/:/opt/core/logs/
+      - aitools_table_data:/opt/core/tabletools-data
+    expose:
+      - "18668"
+      - "18669"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18668/docs', timeout=3); urllib.request.urlopen('http://127.0.0.1:18669/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
     networks:
       - astron-agent-network
     restart: always
@@ -383,6 +405,8 @@ services:
       PI_AGENT_INTERNAL_SECRET: "${PI_AGENT_INTERNAL_SECRET:?Set PI_AGENT_INTERNAL_SECRET to a high-entropy value}"
       PI_AGENT_ALLOW_INSECURE_DEVELOPMENT_SECRET: "${PI_AGENT_ALLOW_INSECURE_DEVELOPMENT_SECRET:-false}"
       PI_AGENT_MAX_RUN_MS: "${PI_AGENT_MAX_RUN_MS:-1500000}"
+      PI_AGENT_MODEL_TIMEOUT_MS: "${PI_AGENT_MODEL_TIMEOUT_MS:-120000}"
+      PI_AGENT_MODEL_MAX_RETRIES: "${PI_AGENT_MODEL_MAX_RETRIES:-1}"
       PI_AGENT_MAX_WAIT_SECONDS: "${PI_AGENT_MAX_WAIT_SECONDS:-120}"
       PI_AGENT_REPEAT_TOOL_CALL_LIMIT: "${PI_AGENT_REPEAT_TOOL_CALL_LIMIT:-8}"
     networks:
@@ -677,6 +701,7 @@ services:
       APP_URL: "${APP_URL:-}"
       KNOWLEDGE_URL: "${KNOWLEDGE_URL:-}"
       TOOL_URL: "${TOOL_URL:-}"
+      TOOL_INTERNAL_ALLOWLIST: "${TOOL_INTERNAL_ALLOWLIST:-core-aitools:18669}"
       AGENT_URL: "${AGENT_URL:-http://core-agent:${CORE_AGENT_PORT}}"
       TOOL_RPA_URL: "${TOOL_RPA_URL:-}"
       WORKFLOW_URL: "${WORKFLOW_URL:-}"
@@ -747,4 +772,6 @@ volumes:
   minio_data:
     driver: local
   nginx_logs:
+    driver: local
+  aitools_table_data:
     driver: local

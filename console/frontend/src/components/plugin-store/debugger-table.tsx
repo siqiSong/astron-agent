@@ -261,6 +261,29 @@ function DebuggerTable({
           onBlur={() => handleCheckInput(record, 'default')}
         />
       );
+    } else if (type === 'object' || type?.startsWith('array-')) {
+      const placeholder =
+        type === 'object'
+          ? '{"字段":"值"}'
+          : type === 'array-string'
+            ? '["字段1","字段2"]'
+            : type === 'array-object'
+              ? '[{"字段":"值"}]'
+              : '[1,2]';
+      return (
+        <Input.TextArea
+          disabled={record?.defalutDisabled || false}
+          placeholder={placeholder}
+          className="global-input params-input font-mono"
+          autoSize={{ minRows: 2, maxRows: 8 }}
+          value={(record?.default as string) || ''}
+          onChange={e => {
+            handleInputParamsChange(record?.id, e.target.value);
+            handleCheckInput(record, 'default');
+          }}
+          onBlur={() => handleCheckInput(record, 'default')}
+        />
+      );
     } else {
       return null;
     }
@@ -311,7 +334,7 @@ function DebuggerTable({
       width: '40%',
       render: (_: unknown, record: DebugInput) => (
         <div className="w-full flex flex-col gap-1">
-          {record?.type === 'object' || record?.type === 'array'
+          {record?.type === 'array'
             ? null
             : renderInput(record)}
           {record?.defaultErrMsg && (

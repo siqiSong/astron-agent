@@ -114,6 +114,8 @@ describe("loadRuntimeConfig", () => {
       port: 8090,
       internalSecret: "bridge-secret",
       maxRunMs: 1_500_000,
+      modelTimeoutMs: 120_000,
+      modelMaxRetries: 1,
       maxWaitSeconds: 120,
       repeatToolCallLimit: 8,
     });

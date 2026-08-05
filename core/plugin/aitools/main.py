@@ -6,6 +6,7 @@ import functools
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 print = functools.partial(print, flush=True)  # pylint: disable=redefined-builtin
@@ -40,22 +41,42 @@ def setup_python_path() -> None:
 
 
 def start_service() -> None:
-    """Start FastAPI service"""
+    """Start and supervise the FastAPI and tabletools services."""
     print("\n🚀 Starting AITools service...")
 
     try:
-        # Start FastAPI application
         relative_path = (Path(__file__).resolve().parent).relative_to(
             Path.cwd()
         ) / "app/start_server.py"
         if not relative_path.exists():
             raise FileNotFoundError(f"can not find {relative_path}")
-        subprocess.run([sys.executable, relative_path], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Service startup failed: {e}")
-        sys.exit(1)
+        tabletools_path = Path(os.environ.get("TABLETOOLS_BINARY", "/usr/local/bin/tabletools"))
+        if not tabletools_path.exists():
+            raise FileNotFoundError(f"can not find {tabletools_path}")
+
+        processes = [
+            subprocess.Popen([sys.executable, relative_path]),
+            subprocess.Popen([str(tabletools_path)]),
+        ]
+        while True:
+            for process in processes:
+                exit_code = process.poll()
+                if exit_code is None:
+                    continue
+                for sibling in processes:
+                    if sibling is not process and sibling.poll() is None:
+                        sibling.terminate()
+                        sibling.wait(timeout=10)
+                if exit_code:
+                    print(f"❌ Service child exited with code {exit_code}")
+                    sys.exit(exit_code)
+                return
+            time.sleep(0.2)
     except KeyboardInterrupt:
         print("\n🛑 Service stopped")
+        for process in locals().get("processes", []):
+            if process.poll() is None:
+                process.terminate()
         sys.exit(0)
 
 

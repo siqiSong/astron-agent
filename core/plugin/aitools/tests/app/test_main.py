@@ -76,26 +76,34 @@ class TestMainConfig:
 class TestStartService:
     """Test cases for start_service function."""
 
-    @patch("subprocess.run")
+    @patch("subprocess.Popen")
     @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.resolve")
-    def test_start_service_success(
-        self, mock_resolve: MagicMock, mock_exists: MagicMock, mock_run: MagicMock
+    def test_start_service_starts_both_children(
+        self, mock_resolve: MagicMock, mock_exists: MagicMock, mock_popen: MagicMock
     ) -> None:
-        """Test start_service runs successfully."""
+        """Both the Python API and Go tabletools child must start."""
         from main import start_service
 
         mock_resolve.return_value = MagicMock()
         mock_resolve.return_value.relative_to.return_value = MagicMock()
         mock_resolve.return_value.relative_to.return_value.exists.return_value = True
-
-        # Should not raise
+        python_proc = MagicMock()
+        python_proc.poll.return_value = 0
+        go_proc = MagicMock()
+        go_proc.poll.return_value = None
+        mock_popen.side_effect = [python_proc, go_proc]
         start_service()
+        commands = [call.args[0] for call in mock_popen.call_args_list]
+        assert len(commands) == 2
+        assert commands[0][0] == sys.executable
+        assert any("tabletools" in str(command) for command in commands)
+        go_proc.terminate.assert_called_once()
 
-    @patch("subprocess.run")
+    @patch("subprocess.Popen")
     @patch("pathlib.Path.exists", return_value=False)
     def test_start_service_file_not_found(
-        self, mock_exists: MagicMock, mock_run: MagicMock
+        self, mock_exists: MagicMock, mock_popen: MagicMock
     ) -> None:
         """Test start_service raises FileNotFoundError when file doesn't exist."""
         from main import start_service
@@ -103,10 +111,14 @@ class TestStartService:
         with pytest.raises(FileNotFoundError):
             start_service()
 
-    @patch("subprocess.run")
+    @patch("subprocess.Popen")
+    @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.resolve")
     def test_start_service_subprocess_error(
-        self, mock_resolve: MagicMock, mock_run: MagicMock
+        self,
+        mock_resolve: MagicMock,
+        mock_exists: MagicMock,
+        mock_popen: MagicMock,
     ) -> None:
         """Test start_service handles subprocess error."""
         from main import start_service
@@ -115,16 +127,24 @@ class TestStartService:
         mock_resolve.return_value.relative_to.return_value = MagicMock()
         mock_resolve.return_value.relative_to.return_value.exists.return_value = True
 
-        mock_run.side_effect = subprocess.CalledProcessError(1, "cmd")
+        failed = MagicMock()
+        failed.poll.return_value = 1
+        sibling = MagicMock()
+        sibling.poll.return_value = None
+        mock_popen.side_effect = [failed, sibling]
 
         with pytest.raises(SystemExit) as exc_info:
             start_service()
         assert exc_info.value.code == 1
 
-    @patch("subprocess.run")
+    @patch("subprocess.Popen")
+    @patch("pathlib.Path.exists", return_value=True)
     @patch("pathlib.Path.resolve")
     def test_start_service_keyboard_interrupt(
-        self, mock_resolve: MagicMock, mock_run: MagicMock
+        self,
+        mock_resolve: MagicMock,
+        mock_exists: MagicMock,
+        mock_popen: MagicMock,
     ) -> None:
         """Test start_service handles keyboard interrupt."""
         from main import start_service
@@ -133,7 +153,7 @@ class TestStartService:
         mock_resolve.return_value.relative_to.return_value = MagicMock()
         mock_resolve.return_value.relative_to.return_value.exists.return_value = True
 
-        mock_run.side_effect = KeyboardInterrupt()
+        mock_popen.side_effect = KeyboardInterrupt()
 
         with pytest.raises(SystemExit) as exc_info:
             start_service()

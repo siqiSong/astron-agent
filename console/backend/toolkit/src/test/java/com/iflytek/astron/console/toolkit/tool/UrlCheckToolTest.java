@@ -5,6 +5,7 @@ import com.iflytek.astron.console.toolkit.entity.table.ConfigInfo;
 import com.iflytek.astron.console.toolkit.mapper.ConfigInfoMapper;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
@@ -104,6 +105,20 @@ class UrlCheckToolTest {
         UrlCheckTool tool = new UrlCheckTool(mapper);
 
         assertThrows(BusinessException.class, () -> tool.checkUrl("http://127.0.0.1/internal"));
+    }
+
+    @Test
+    void checkUrlAllowsOnlyExactConfiguredInternalToolAuthority() {
+        UrlCheckTool tool = new UrlCheckTool(mockConfigMapper("", ""));
+        ReflectionTestUtils.setField(tool, "internalAllowlist", "core-aitools:18669");
+
+        tool.checkUrl("http://core-aitools:18669/aitools/v1/excel_generate");
+        assertThrows(BusinessException.class,
+                () -> tool.checkUrl("http://core-aitools:18668/aitools/v1/excel_generate"));
+        assertThrows(BusinessException.class,
+                () -> tool.checkUrl("http://core-aitools:18669.evil.test/aitools/v1/excel_generate"));
+        assertThrows(BusinessException.class,
+                () -> tool.checkUrl("http://core-aitools:18669/not-a-table-tool"));
     }
 
     @Test

@@ -1,0 +1,42 @@
+services:
+  core-link:
+    image: astron-agent-core-link:fork-local
+    build:
+      context: ../..
+      dockerfile: core/plugin/link/Dockerfile
+
+  core-aitools:
+    image: astron-agent-core-aitools:fork-local
+    build:
+      context: ../..
+      dockerfile: core/plugin/aitools/Dockerfile
+
+  core-pi-agent:
+    image: astron-agent-core-pi-agent:fork-local
+    build:
+      context: ../../core/pi-agent
+      dockerfile: Dockerfile
+
+  core-agent:
+    image: astron-agent-core-agent:fork-local
+    build:
+      context: ../..
+      dockerfile: core/agent/Dockerfile
+
+  core-workflow:
+    image: astron-agent-core-workflow:fork-local
+    build:
+      context: ../..
+      dockerfile: core/workflow/Dockerfile
+
+  console-hub:
+    image: astron-agent-console-hub:fork-local
+    build:
+      context: ../..
+      dockerfile: console/backend/hub/Dockerfile
+
+  console-frontend:
+    image: astron-agent-console-frontend:fork-local
+    build:
+      context: ../..
+      dockerfile: console/frontend/Dockerfile

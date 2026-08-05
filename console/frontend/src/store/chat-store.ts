@@ -97,16 +97,20 @@ const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       isLoading: true,
     })),
 
-  updateStreamingMessage: (content: string): void =>
+  updateStreamingMessage: (messageId: number, content: string): void =>
     set(state => {
       if (state.messageList.length === 0) return state;
 
       const updatedMessageList = [...state.messageList];
-      const lastMessage = updatedMessageList[updatedMessageList.length - 1];
+      const messageIndex = updatedMessageList.findIndex(
+        message => message.id === messageId
+      );
+      if (messageIndex < 0) return state;
+      const targetMessage = updatedMessageList[messageIndex];
 
-      if (lastMessage?.streamStatus === 'streaming') {
-        updatedMessageList[updatedMessageList.length - 1] = {
-          ...lastMessage,
+      if (targetMessage?.streamStatus === 'streaming') {
+        updatedMessageList[messageIndex] = {
+          ...targetMessage,
           message: content,
           tools: state.currentToolName ? [state.currentToolName] : [],
           traceSource: state.traceSource,
@@ -163,6 +167,7 @@ const useChatStore = create<ChatState & ChatActions>((set, get) => ({
     }),
 
   finishStreamingMessage: (
+    messageId: number,
     sid?: string,
     reqId?: number,
     status: 'completed' | 'cancelled' | 'error' = 'completed',
@@ -172,13 +177,17 @@ const useChatStore = create<ChatState & ChatActions>((set, get) => ({
       if (state.messageList.length === 0) return state;
 
       const updatedMessageList = [...state.messageList];
-      const lastMessage = updatedMessageList[updatedMessageList.length - 1];
+      const messageIndex = updatedMessageList.findIndex(
+        message => message.id === messageId
+      );
+      if (messageIndex < 0) return state;
+      const targetMessage = updatedMessageList[messageIndex];
 
       // 完成流式消息，添加sid和id
-      if (lastMessage?.streamStatus === 'streaming') {
-        updatedMessageList[updatedMessageList.length - 1] = {
-          ...lastMessage,
-          message: lastMessage.message || '', // 确保message字段存在
+      if (targetMessage?.streamStatus === 'streaming') {
+        updatedMessageList[messageIndex] = {
+          ...targetMessage,
+          message: targetMessage.message || '', // 确保message字段存在
           sid,
           reqId,
           streamStatus: status,

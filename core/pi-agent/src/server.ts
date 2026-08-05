@@ -92,6 +92,8 @@ function handleSession(
 
     void runAgent(request, send, controller.signal, {
       toolBridge: bridge,
+      modelTimeoutMs: config.modelTimeoutMs,
+      modelMaxRetries: config.modelMaxRetries,
       maxWaitSeconds: config.maxWaitSeconds,
       repeatToolCallLimit: config.repeatToolCallLimit,
     })

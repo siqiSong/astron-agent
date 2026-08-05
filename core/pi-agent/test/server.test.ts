@@ -14,6 +14,8 @@ const config: RuntimeConfig = {
   port: 8090,
   internalSecret: "bridge-secret",
   maxRunMs: 2_000,
+  modelTimeoutMs: 120_000,
+  modelMaxRetries: 1,
   maxWaitSeconds: 120,
   repeatToolCallLimit: 8,
 };

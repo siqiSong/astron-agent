@@ -157,6 +157,29 @@ class TestBaseApiBuilder:
             assert "  " not in mcp_urls
 
     @pytest.mark.asyncio
+    async def test_build_plugins_moves_url_like_mcp_ids_to_urls(
+        self, builder: BaseApiBuilder
+    ) -> None:
+        """Treat legacy URL values as URLs, never as database MCP IDs."""
+        with patch(
+            "agent.service.builder.base_builder.McpPluginFactory"
+        ) as mock_factory:
+            mock_factory.return_value.gen = AsyncMock(return_value=[])
+
+            await builder.build_plugins(
+                [],
+                ["database-server-id", "http://core-aitools:18669/mcp/sse"],
+                ["http://core-aitools:18669/mcp/sse"],
+                [],
+            )
+
+            call_args = mock_factory.call_args.kwargs
+            assert call_args["mcp_server_ids"] == ["database-server-id"]
+            assert call_args["mcp_server_urls"] == [
+                "http://core-aitools:18669/mcp/sse"
+            ]
+
+    @pytest.mark.asyncio
     async def test_build_chat_runner(self, builder: BaseApiBuilder) -> None:
         """Test building ChatRunner"""
         mock_model = BaseLLMModel.model_construct(name="m", llm=MagicMock())

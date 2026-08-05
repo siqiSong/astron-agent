@@ -80,8 +80,9 @@ def upgrade() -> None:
         ),
     )
 
+    connection = op.get_bind()
     for statement in DEFAULT_TOOL_INSERT_STATEMENTS:
-        op.execute(statement)
+        connection.exec_driver_sql(statement)
 
 
 def downgrade() -> None:

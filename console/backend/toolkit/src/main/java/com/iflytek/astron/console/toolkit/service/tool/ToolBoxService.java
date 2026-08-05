@@ -1366,9 +1366,33 @@ public class ToolBoxService extends ServiceImpl<ToolBoxMapper, ToolBox> {
         JSONObject jsonObject = new JSONObject();
         headerItems.forEach(item -> {
             switch (item.getType()) {
+                case "array-object":
+                case "array-string":
+                case "array-integer":
+                case "array-number":
+                case "array-boolean":
+                    Object arrayValue = item.getDft();
+                    if (arrayValue instanceof JSONArray) {
+                        jsonObject.put(item.getName(), arrayValue);
+                        break;
+                    }
+                    try {
+                        jsonObject.put(item.getName(), JSON.parseArray(String.valueOf(arrayValue)));
+                    } catch (Exception e) {
+                        throw new BusinessException(ResponseEnum.PARAM_ERROR);
+                    }
+                    break;
                 case OBJECT:
-                    JSONObject obj = recurGenRunParam(item.getChildren());
-                    jsonObject.put(item.getName(), obj);
+                    if (item.getChildren() != null) {
+                        JSONObject obj = recurGenRunParam(item.getChildren());
+                        jsonObject.put(item.getName(), obj);
+                    } else {
+                        try {
+                            jsonObject.put(item.getName(), JSON.parseObject(String.valueOf(item.getDft())));
+                        } catch (Exception e) {
+                            throw new BusinessException(ResponseEnum.PARAM_ERROR);
+                        }
+                    }
                     break;
                 case ARRAY:
                     JSONArray array = new JSONArray();

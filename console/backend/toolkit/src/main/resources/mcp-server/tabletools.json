@@ -1,0 +1,115 @@
+{
+  "id": "tabletools-local-v1",
+  "ver": "1.0",
+  "mcp": {
+    "createTime": "2026-08-05T00:00:00+08:00",
+    "server": "http://core-aitools:18669/mcp/sse",
+    "authorized": true,
+    "logo": "/aitools-files/icons/table-extract.svg",
+    "name": "表格处理工具箱",
+    "creator": "星辰Agent官方",
+    "brief": "读取表格、生成 Excel，并将结构化数据绘制为柱形图或饼图。",
+    "overview": "一个 MCP 服务提供四个无外部依赖的表格工具。",
+    "mcpType": "sse",
+    "tags": ["表格", "Excel", "图表"],
+    "content": "#### 表格处理工具箱\n\n通过一个 MCP 服务统一提供表格数据提取、Excel 生成、柱形图和饼图四项能力。服务地址：`http://core-aitools:18669/mcp/sse`。",
+    "tools": [
+      {
+        "name": "table_extract",
+        "description": "读取 XLS、XLSX 或 CSV 并返回结构化行数据。",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "excel_url": {"type": "string", "description": "表格文件 URL"},
+            "sheet_name": {"type": "string"},
+            "range": {"type": "string"},
+            "encoding": {"type": "string", "default": "auto"}
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "required": ["rows", "json", "markdown", "table"],
+          "properties": {
+            "rows": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+            "json": {"type": "string"},
+            "markdown": {"type": "string"},
+            "table": {"type": "object"}
+          }
+        }
+      },
+      {
+        "name": "bar_chart",
+        "description": "根据结构化表格行生成柱形图 SVG。",
+        "inputSchema": {
+          "type": "object",
+          "required": ["data"],
+          "properties": {
+            "data": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+            "category_field": {"type": "string"},
+            "value_fields": {"type": "array", "items": {"type": "string"}},
+            "title": {"type": "string"}
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "required": ["path", "image_url", "image_url_md", "mapping"],
+          "properties": {
+            "path": {"type": "string"},
+            "image_url": {"type": "string"},
+            "image_url_md": {"type": "string"},
+            "mapping": {"type": "object"}
+          }
+        }
+      },
+      {
+        "name": "pie_chart",
+        "description": "根据结构化表格行生成饼图或圆环图 SVG。",
+        "inputSchema": {
+          "type": "object",
+          "required": ["data"],
+          "properties": {
+            "data": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+            "category_field": {"type": "string"},
+            "value_field": {"type": "string"},
+            "title": {"type": "string"},
+            "donut": {"type": "boolean", "default": false}
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "required": ["path", "image_url", "image_url_md", "mapping"],
+          "properties": {
+            "path": {"type": "string"},
+            "image_url": {"type": "string"},
+            "image_url_md": {"type": "string"},
+            "mapping": {"type": "object"}
+          }
+        }
+      },
+      {
+        "name": "excel_generate",
+        "description": "根据结构化表格行生成可下载 XLSX。",
+        "inputSchema": {
+          "type": "object",
+          "required": ["data"],
+          "properties": {
+            "data": {"type": "array", "items": {"type": "object", "additionalProperties": true}},
+            "columns": {"type": "array", "items": {"type": "string"}},
+            "sheet_name": {"type": "string", "default": "Sheet1"},
+            "start_cell": {"type": "string", "default": "A1"}
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "required": ["path", "file_url", "file_url_md", "summary"],
+          "properties": {
+            "path": {"type": "string"},
+            "file_url": {"type": "string"},
+            "file_url_md": {"type": "string"},
+            "summary": {"type": "object"}
+          }
+        }
+      }
+    ]
+  }
+}
