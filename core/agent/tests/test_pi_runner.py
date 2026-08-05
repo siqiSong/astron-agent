@@ -685,6 +685,94 @@ async def test_subworkflow_stream_stays_visible_and_is_accumulated_for_pi(
 
 
 @pytest.mark.asyncio
+async def test_streamed_plugin_error_preserves_terminal_payload_and_closes_source(
+    unused_tcp_port: int,
+) -> None:
+    received_result: dict[str, Any] = {}
+    closed = asyncio.Event()
+    closed_before_result: list[bool] = []
+    retained_streams: list[AsyncIterator[PluginResponse]] = []
+
+    async def workflow_run(
+        action_input: dict[str, Any], span: Span
+    ) -> AsyncIterator[PluginResponse]:
+        try:
+            yield PluginResponse(
+                sid="workflow-sid",
+                result={"reasoning_content": "", "content": "partial"},
+            )
+            yield PluginResponse(
+                code=500,
+                sid="workflow-sid",
+                result={
+                    "message": "upstream failed",
+                    "detail": {"retryable": True},
+                },
+            )
+            raise AssertionError("terminal plugin errors must stop iteration")
+        finally:
+            closed.set()
+
+    def retained_workflow_run(
+        action_input: dict[str, Any], span: Span
+    ) -> AsyncIterator[PluginResponse]:
+        stream = workflow_run(action_input, span)
+        retained_streams.append(stream)
+        return stream
+
+    async def handler(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        await ws.receive_json()
+        await ws.send_json(
+            {
+                "type": "tool_call",
+                "callId": "workflow-error-call",
+                "turnId": "turn-1",
+                "name": "subflow",
+                "arguments": {"value": "x"},
+            }
+        )
+        received_result.update(await ws.receive_json())
+        closed_before_result.append(closed.is_set())
+        await ws.send_json({"type": "done"})
+        return ws
+
+    async with serve_pi(unused_tcp_port, handler) as url:
+        responses = [
+            response
+            async for response in pi_runner(
+                url,
+                [plugin("subflow", retained_workflow_run, typ="workflow")],
+            ).run(Span(app_id="app", uid="uid"), node_trace())
+        ]
+
+    terminal_error = {
+        "message": "upstream failed",
+        "detail": {"retryable": True},
+    }
+    assert closed_before_result == [True]
+    assert closed.is_set()
+    assert received_result == {
+        "type": "tool_result",
+        "callId": "workflow-error-call",
+        "result": terminal_error,
+        "isError": True,
+    }
+    events = public_events(responses)
+    progress_events = [event for event in events if event.type == "tool_progress"]
+    assert [event.summary for event in progress_events] == [
+        '{"reasoning_content":"","content":"partial"}',
+        '{"message":"upstream failed","detail":{"retryable":true}}',
+    ]
+    tool_finish = next(event for event in events if event.type == "tool_finish")
+    assert tool_finish.status == "error"
+    assert tool_finish.response == terminal_error
+    tool_step = next(item.content for item in responses if item.typ == "cot_step")
+    assert tool_step.action_output == terminal_error
+
+
+@pytest.mark.asyncio
 async def test_duplicate_normalized_names_invoke_the_correct_plugin(
     unused_tcp_port: int,
 ) -> None:

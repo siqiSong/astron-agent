@@ -194,7 +194,7 @@ class PiRunner:
                 code=500,
                 result={"message": f"Plugin {plugin.name} returned no result"},
             )
-        if content_parts or reasoning_parts:
+        if last_response.code == 0 and (content_parts or reasoning_parts):
             return last_response.model_copy(
                 update={
                     "result": {
@@ -213,20 +213,23 @@ class PiRunner:
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         last_response: PluginResponse | None = None
-        async for response in invocation:
-            if not isinstance(response, PluginResponse):
-                raise TypeError(f"Plugin {plugin.name} streamed an invalid response")
-            last_response = response
-            result = self._dict_result(response.result)
-            reasoning_content = result.get("reasoning_content") or ""
-            content = result.get("content") or ""
-            if reasoning_content:
-                reasoning_parts.append(str(reasoning_content))
-            if content:
-                content_parts.append(str(content))
-            yield _ExecutionEvent(progress=result)
-            if response.code != 0:
-                break
+        async with aclosing(invocation) as stream:
+            async for response in stream:
+                if not isinstance(response, PluginResponse):
+                    raise TypeError(
+                        f"Plugin {plugin.name} streamed an invalid response"
+                    )
+                last_response = response
+                result = self._dict_result(response.result)
+                reasoning_content = result.get("reasoning_content") or ""
+                content = result.get("content") or ""
+                if reasoning_content:
+                    reasoning_parts.append(str(reasoning_content))
+                if content:
+                    content_parts.append(str(content))
+                yield _ExecutionEvent(progress=result)
+                if response.code != 0:
+                    break
 
         final_response = self._final_plugin_response(
             plugin,
