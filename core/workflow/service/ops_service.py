@@ -13,9 +13,7 @@ from workflow.extensions.otlp.trace.span import Span
 
 def _report_to_elasticsearch(workflow_data: str) -> None:
     base_url = os.environ["WORKFLOW_TRACE_ES_URL"].strip().rstrip("/")
-    index_prefix = os.getenv(
-        "WORKFLOW_TRACE_ES_INDEX_PREFIX", "spark-agent-builder-"
-    )
+    index_prefix = os.getenv("WORKFLOW_TRACE_ES_INDEX_PREFIX", "spark-agent-builder-")
     index_month = datetime.now(timezone.utc).strftime("%Y.%m")
     url = f"{base_url}/{index_prefix}{index_month}/_doc"
     timeout = float(os.getenv("WORKFLOW_TRACE_ES_TIMEOUT_SECONDS", "5"))

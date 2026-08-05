@@ -33,9 +33,7 @@ def test_trace_is_written_directly_to_elasticsearch_when_configured(monkeypatch)
     assert post.call_args.args[0] == (
         f"http://elasticsearch:9200/spark-agent-builder-{month}/_doc"
     )
-    assert post.call_args.kwargs["headers"] == {
-        "Content-Type": "application/json"
-    }
+    assert post.call_args.kwargs["headers"] == {"Content-Type": "application/json"}
     assert post.call_args.kwargs["timeout"] == 5.0
     response.raise_for_status.assert_called_once_with()
     kafka.assert_not_called()
